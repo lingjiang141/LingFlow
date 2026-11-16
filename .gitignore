@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.validation/
+*.log
+ui/assets/
+/test-results/
+/release/
+/.env
+/.env.local
+/*.sqlite
+/*.sqlite-wal
+/*.sqlite-shm
+/RELEASE-MANIFEST.json

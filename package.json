@@ -1,0 +1,32 @@
+{
+  "name": "lingflow",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "main": "desktop/main.cjs",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "postinstall": "node node_modules/electron/install.js",
+    "setup:runtime": "node node_modules/electron/install.js",
+    "start": "electron .",
+    "export:source": "node scripts/export-project.mjs",
+    "build:portable": "node scripts/build-portable.mjs",
+    "service": "node src/server.mjs",
+    "test": "node --test --test-concurrency=1 tests/*.test.mjs",
+    "test:panel": "node --test --test-concurrency=1 tests/panel.test.mjs tests/panel-client.test.mjs",
+    "check": "node scripts/check.mjs",
+    "test:desktop": "node scripts/desktop-smoke.mjs",
+    "test:visual": "node scripts/visual-check.mjs",
+    "test:panel-visual": "node scripts/panel-visual.mjs",
+    "test:panel-e2e": "node scripts/panel-e2e.mjs",
+    "panel:plan": "node scripts/panel-install.mjs",
+    "panel:install": "node scripts/panel-install.mjs --apply",
+    "panel:uninstall": "node scripts/panel-install.mjs --remove --apply"
+  },
+  "devDependencies": {
+    "electron": "45.2.3"
+  }
+}

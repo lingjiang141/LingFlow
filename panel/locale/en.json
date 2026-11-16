@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "LingFlow Sidebar",
+    "description": "Inspect LingFlow projects, teams, tickets and activity from the DSH sidebar, and bind, enable or configure members. Shares one local service and one delivery chain with the standalone window."
+  }
+}

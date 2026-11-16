@@ -1,0 +1,100 @@
+/* 成员卡自定义外观：右上角图标按钮与媒体层带来的细节微调。
+   卡片主体布局和 .card-media 的定位都在 style.css 的 .role 规则里，
+   这里只补充本模块新增的元素和状态类，不重复定义卡片主体样式。 */
+
+.role > .card-appearance {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--lf-text-mute);
+  cursor: pointer;
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease;
+}
+
+.role > .card-appearance svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+}
+
+.role > .card-appearance:hover {
+  background: var(--lf-surface-2);
+  border-color: var(--lf-border);
+  color: var(--lf-text);
+}
+
+.role > .card-appearance:focus-visible {
+  color: var(--lf-text);
+  outline: 2px solid var(--lf-ring);
+  outline-offset: 1px;
+}
+
+/* 图标浮在右上角：给标题留出右侧空间，长成员名不会钻到按钮下面。 */
+.role.has-appearance > h3 {
+  padding-right: 24px;
+}
+
+/* 卡片有背景图时，图标要落在半透明垫片上：亮图/暗图上都能看清。 */
+.role.has-media > .card-appearance {
+  background: color-mix(in srgb, var(--lf-surface) 72%, transparent);
+  border-color: color-mix(in srgb, var(--lf-border) 78%, transparent);
+  color: var(--lf-text);
+  backdrop-filter: blur(6px) saturate(1.08);
+}
+
+html:not([data-theme="dark"]) .role.has-media > .card-appearance {
+  background: color-mix(in srgb, var(--lf-surface) 82%, transparent);
+}
+
+/* Keep text readable even if a full-opacity image contains both dark and bright areas. */
+.role.has-media {
+  --role-image-scrim: rgb(15 23 42 / 76%);
+  --role-image-ink: #f8fafc;
+}
+
+html:not([data-theme="dark"]) .role.has-media {
+  --role-image-scrim: rgb(248 250 252 / 84%);
+  --role-image-ink: #172033;
+}
+
+.role.has-media::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: var(--role-image-scrim);
+  pointer-events: none;
+}
+
+/* The image is the first DOM child; put the scrim above it and below the text. */
+.role.has-media > .card-media { z-index: -1; }
+.role.has-media { isolation: isolate; }
+.role.has-media > h3,
+.role.has-media > small,
+.role.has-media > p {
+  color: var(--role-image-ink);
+  font-weight: 600;
+}
+
+.role.has-media .role-actions > button:disabled { opacity: 0.76; }
+
+/* 有背景图时垫一层柔和投影，图片卡和纯色卡的层次更清楚。 */
+.role.has-media {
+  box-shadow: 0 10px 26px rgba(3, 6, 12, 0.24);
+}
+
+html:not([data-theme="dark"]) .role.has-media {
+  box-shadow: 0 10px 24px rgba(28, 45, 74, 0.12);
+}

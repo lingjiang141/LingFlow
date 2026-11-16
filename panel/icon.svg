@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="LingFlow">
+  <defs>
+    <linearGradient id="lf" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5b8cff"/>
+      <stop offset="1" stop-color="#37d6b0"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#lf)" d="M32 4 60 32 32 60 4 32Z"/>
+  <path fill="#0b1020" fill-opacity=".82" d="M32 16 48 32 32 48 16 32Z"/>
+  <circle cx="32" cy="32" r="5.5" fill="#37d6b0"/>
+</svg>

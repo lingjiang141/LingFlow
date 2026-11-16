@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'none'; object-src 'none'">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>LingFlow · 桌宠</title>
+  <link rel="stylesheet" href="pet.css">
+</head>
+<body>
+  <main id="stage" class="stage">
+    <header id="overview" class="overview surface" hidden>
+      <div class="heading"><span class="brand">◈ LINGFLOW</span><span id="connection" class="connection">实时同步</span><button id="close" aria-label="收起状态概览">×</button></div>
+      <div class="selectors"><select id="project" aria-label="项目"></select><span class="divider">/</span><select id="spec" aria-label="Spec"></select></div>
+      <div class="progress-line"><span id="progress-label">尚无已登记规格</span><strong id="percentage">0<span>%</span></strong></div>
+      <div class="progress-track"><div id="progress-fill"></div></div>
+    </header>
+    <div class="orbit" aria-hidden="true" hidden><i></i><i></i><i></i></div>
+    <div id="pet-wrap" class="pet-wrap">
+      <button id="pet" aria-label="查看当前 Spec 进度；按住拖动，右键更换形象" aria-expanded="false"><canvas id="sprite" width="184" height="170"></canvas></button>
+      <div id="pet-caption" class="pet-caption"><span class="live-dot"></span><span id="caption">LingFlow</span></div>
+      <p id="gesture-hint" hidden>单击收起 · 拖动移位 · 右键换形象</p>
+    </div>
+    <section id="closed" class="ticket-group surface closed" hidden aria-label="已收口的票"><h2><span class="sequence">01</span><span>已收口</span><b>0</b></h2><div class="tickets"></div></section>
+    <section id="active" class="ticket-group surface active" hidden aria-label="开发中的票"><h2><span class="sequence">02</span><span>开发中</span><b>0</b></h2><div class="tickets"></div></section>
+    <section id="waiting" class="ticket-group surface waiting" hidden aria-label="等待准入的票"><h2><span class="sequence">03</span><span>等待准入</span><b>0</b></h2><div class="tickets"></div></section>
+  </main>
+  <script type="module" src="pet.js"></script>
+</body>
+</html>

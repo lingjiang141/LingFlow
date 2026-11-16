@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark" data-wallpaper="0">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>LingFlow · 本地协作</title>
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/cards.css" />
+  </head>
+  <body>
+    <div id="window-background" aria-hidden="true"></div>
+    <div id="window-scrim" aria-hidden="true"></div>
+    <aside>
+      <div class="brand"><b>◈</b> LingFlow<span>本地 Agent 工作流</span></div>
+      <div id="theme-dock" class="theme-dock"></div>
+      <div class="eyebrow">工作空间</div>
+      <nav id="projects"></nav>
+      <button id="new-project" class="subtle">＋ 添加项目</button>
+      <div class="aside-bottom">
+        <span class="dot"></span> 本地运行 · DSH<br /><small
+          >快速模式 / 独立窗口</small
+        >
+      </div>
+    </aside>
+    <main>
+      <header>
+        <div>
+          <div class="eyebrow">协作工作台</div>
+          <h1 id="project-title">让协作有始有终。</h1>
+          <p id="project-path">连接真实会话，从一次明确的需求开始。</p>
+        </div>
+        <div class="project-actions">
+          <button id="desktop-pet" hidden>桌宠模式</button>
+          <span class="badge">快速模式</span>
+          <button id="controller-settings" hidden>主控提示词</button>
+          <button id="check-settings" hidden>后台检查</button>
+          <button id="delete-project" class="danger" hidden>删除项目</button>
+        </div>
+      </header>
+      <div id="error" role="alert" hidden></div>
+      <section id="empty">
+        <div class="empty-symbol">◈</div>
+        <h2>建立你的第一个协作团队</h2>
+        <p>
+          按项目配置主控、开发与独立审查。<br />派单、交付与回报都有迹可循。
+        </p>
+        <button id="first-project" class="primary">添加本地项目</button>
+        <div class="steps">
+          <span>01 选择项目</span><span>02 绑定 DSH</span
+          ><span>03 确认需求</span>
+        </div>
+      </section>
+      <div id="workspace" hidden>
+        <section class="section">
+          <div class="section-head">
+            <h2>需求与交付</h2>
+            <span>在主控会话讨论需求与派单</span>
+          </div>
+          <div class="spec-board-header">
+            <label for="spec-scope">规格范围</label>
+            <select id="spec-scope"></select>
+            <p id="spec-summary"></p>
+          </div>
+          <div id="requirements"></div>
+          <div class="board" id="board"></div>
+        </section>
+        <section class="section">
+          <div class="section-head">
+            <h2>团队会话</h2>
+            <div><button id="patrol-settings">自动巡检</button> <button id="add-role">＋ 添加成员</button></div>
+          </div>
+          <div id="roles" class="roles"></div>
+          <p id="no-roles" class="muted" hidden>暂无成员。点击「添加成员」配置团队。</p>
+          <div id="requests"></div>
+        </section>
+        <section class="section">
+          <div class="section-head">
+            <h2>协作动态</h2>
+            <span>普通进度静默记录，结果与阻塞才唤醒主控</span>
+          </div>
+          <div id="notices"></div>
+        </section>
+      </div>
+      <footer>模型在 DSH 中选择 · 高风险自动独立审查 · 用户完成业务验收</footer>
+    </main>
+    <dialog id="modal">
+      <form id="modal-form">
+        <h2 id="modal-title"></h2>
+        <div id="fields"></div>
+        <div id="form-error" role="alert"></div>
+        <div class="dialog-actions">
+          <button type="button" id="cancel">取消</button
+          ><button type="submit" class="primary">确认</button>
+        </div>
+      </form>
+    </dialog>
+    <script type="module" src="/theme.js"></script>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

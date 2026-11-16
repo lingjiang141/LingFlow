@@ -1,0 +1,8 @@
+{
+  "name": "lingflow-dsh",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./index.mjs",
+  "description": "LingFlow 的 DSH 会话工具与持久投递适配器"
+}

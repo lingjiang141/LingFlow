@@ -1,0 +1,35 @@
+name: Windows validation
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run test:desktop
+      - name: Export source
+        run: node scripts/export-project.mjs "$env:RUNNER_TEMP/LingFlow-source"
+      - name: Build portable app
+        run: node scripts/build-portable.mjs "$env:RUNNER_TEMP/LingFlow-win-x64"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LingFlow-source
+          path: ${{ runner.temp }}/LingFlow-source
+          include-hidden-files: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LingFlow-win-x64
+          path: ${{ runner.temp }}/LingFlow-win-x64
+          include-hidden-files: true

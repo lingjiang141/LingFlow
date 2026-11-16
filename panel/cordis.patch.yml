@@ -1,0 +1,5 @@
+# LingFlow 侧边栏面板：只在插件树中插入本插件，不替换任何已有插件。
+# 安装/更新/卸载请用 E:\LingFlow\scripts\panel-install.mjs（见 panel/README.md）。
+- insert:
+    - id: lingflow-panel
+      name: lingflow-panel
