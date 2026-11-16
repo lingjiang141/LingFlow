@@ -17,6 +17,8 @@ npm start
 
 ## Windows 便携版
 
+从 [GitHub Releases](https://github.com/lingjiang141/LingFlow/releases/latest) 的 Assets 中下载名称带 `win-x64` 的 ZIP。页面中的 `Source code (zip)` 和仓库绿色“代码 → 下载 ZIP”都是源码包。
+
 将整个 `LingFlow-win-x64` 文件夹解压到可写位置，双击 `Start-LingFlow.cmd` 或 `LingFlow.exe`。必须保留 `resources/`、DLL 与许可证文件，不能只复制 exe。桌面运行时已包含 Electron，不需要额外安装 Node；DSH 仍需自行安装，运行下面的接入脚本需 Node.js 24+。这是未签名的便携包，不是 Setup 安装器，当前验证平台为 Windows x64。
 
 应用代码在 `resources/app/`，下列源码命令需在此目录运行。服务的界面和检查会真实读写用户选择的项目，请只绑定受信任的本机团队。

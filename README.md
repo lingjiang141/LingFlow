@@ -1,6 +1,8 @@
 # LingFlow
 多Agent协作工作流（目前仅适配DSH）
 
+**Windows 便携版下载：[前往 Releases](https://github.com/lingjiang141/LingFlow/releases/latest)**。选择名称带 `win-x64` 的 ZIP，完整解压后双击 `Start-LingFlow.cmd` 即可打开；团队协作仍需接入 DSH。绿色“代码 → 下载 ZIP”提供的是源码。
+
 LingFlow 是独立运行的 Windows 桌面协作工作台，使用 DSH 会话，保留快速模式。开发负责票内验证，高风险由独立审查者审查，低、中风险的免审实施票由主控完成独立验收检查。主控核对证据和收口，用户在工作台记录业务验收。
 
 支持 Windows x64。源码安装需要 Node.js 24+；Windows 便携版解压完整目录后运行 `Start-LingFlow.cmd`，桌面界面无需另装 Node。团队协作需要自行安装 DSH 并绑定会话，模型与供应商由 DSH 管理。
