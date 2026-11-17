@@ -13,14 +13,16 @@ test("pet follows selected spec, keeps clockwise buckets and excludes retired ti
     id: String(index), projectId: "p", ticketKey: "R-" + index, state, title: state, description: "票面概述",
     sources: { spec: { file: "spec.md", digest: "v2" } },
   }));
-  const snapshot = { projects: [{ id: "p", name: "项目" }], tasks: [{ ...tasks[0], id: "old", sources: { spec: { file: "spec.md", digest: "v1" } } }, ...tasks] };
+  const snapshot = { projects: [{ id: "p", name: "项目" }], tasks: [{ ...tasks[0], id: "old", sources: { spec: { file: "previous/spec.md", digest: "v1" } } }, ...tasks] };
   const view = petProgress(snapshot, { projectId: "p", specKey: "current" });
   assert.equal(view.total, 7); assert.equal(view.completed, 3); assert.equal(view.accepted, 1); assert.equal(view.percent, 43);
   assert.deepEqual(view.groups.map(group => [group.id, group.tickets.length]), [["closed", 4], ["active", 2], ["waiting", 2]]);
-  assert.equal(petProgress(snapshot, { projectId: "p", specKey: JSON.stringify(["spec.md", "v1"]) }).total, 1);
+  assert.equal(petProgress(snapshot, { projectId: "p", specKey: JSON.stringify(["previous/spec.md", "v1"]) }).total, 1);
   assert.equal(petProgress({ projects: [], tasks: [] }).spec, null);
   const unregistered = petProgress({ projects: snapshot.projects, tasks: [{ ...tasks[0], sources: undefined }] });
   assert.equal(unregistered.total, 0, "Unregistered legacy tasks must not masquerade as the current Spec");
+  assert.equal(petProgress({projects:snapshot.projects,tasks:[{...tasks[0],sources:undefined}]},
+    {projectId:'p',specKey:'all'}).total,1,"Only the explicit whole-project view includes unregistered tasks");
 });
 
 test("each idle action completes exactly two loops; viewing loops coding continuously", () => {
@@ -36,6 +38,17 @@ test("each idle action completes exactly two loops; viewing loops coding continu
       assert.notEqual(action.id, character.coding); assert.notEqual(action.id, character.idle);
     }
   }
+});
+
+test("pet defaults to the whole Spec cycle and can switch back to one frozen revision", () => {
+  const tasks=Array.from({length:8},(_,i)=>({id:String(i),projectId:'p',ticketKey:'R36-'+(i+1),
+    state:i<5?'accepted':'assigned',title:'Ticket '+i,sources:{spec:{file:'round/spec.md',digest:i<5?'v1':i<7?'v2':'v3'}}}));
+  tasks.unshift({...tasks[0],id:'old',sources:{spec:{file:'previous/spec.md',digest:'old'}}});
+  const snapshot={projects:[{id:'p',name:'Project'}],tasks};
+  const view=petProgress(snapshot,{projectId:'p',specKey:'current'});
+  assert.equal(view.total,8);assert.equal(view.completed,5);assert.equal(view.percent,63);
+  assert.equal(view.spec.kind,'cycle');assert.equal(view.cycles.length,2);
+  assert.equal(petProgress(snapshot,{projectId:'p',specKey:JSON.stringify(['round/spec.md','v2'])}).total,2);
 });
 
 test("subject scale ignores isolated effects and tracks the character rather than the full frame", () => {

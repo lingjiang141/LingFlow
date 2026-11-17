@@ -10,7 +10,7 @@ const docs = ["deployment.md", "data-storage.md", "desktop-pet.md", "lingflow-co
 const scripts = ["check.mjs", "desktop-smoke.mjs", "dsh-contract.mjs", "prepare-dsh.mjs", "register-dsh.mjs", "adapt-global-skills.mjs", "backup-global-skills.ps1",
   "export-project.mjs", "build-portable.mjs", "migrate-data.ps1", "panel-install.mjs", "panel-e2e.mjs",
   "panel-embed-probe.mjs", "panel-embed-probe-main.cjs", "panel-visual.mjs", "panel-visual-main.cjs",
-  "pet-smoke.mjs", "tray-exit-smoke.mjs", "visual-check.mjs", "visual-main.cjs", "import-pet-assets.mjs"];
+  "pet-smoke.mjs", "spec-cycle-smoke.mjs", "spec-cycle-smoke.cjs", "tray-exit-smoke.mjs", "visual-check.mjs", "visual-main.cjs", "import-pet-assets.mjs"];
 const ignored = new Set([".git", "node_modules", ".validation", "dist", ".env", ".env.local"]);
 
 export function exportProject(destination, source = projectRoot) {

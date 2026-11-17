@@ -16,7 +16,7 @@ app.whenReady().then(async () => {
   const snapshot = { projects: [{ id: "project", name: "员工考试系统" }], roles: [{ id: "dev", name: "开发成员" }],
     tasks: states.map((state, index) => ({ id: "ticket-" + index, projectId: "project", developerId: "dev", state,
       ticketKey: "R35-" + String(index + 1).padStart(2, "0"), title: titles[index],
-      description: "核对页面中的实际行为，保持入口、状态与接口回执一致。", sources: { spec: { file: "R35 · AI 出题工作台.md", digest: "b74a901bb88d" } } })) };
+      description: "核对页面中的实际行为，保持入口、状态与接口回执一致。", sources: { spec: { file: "R35 · AI 出题工作台.md", digest: index < 5 ? "revision-one" : index < 7 ? "revision-two" : "revision-three" } } })) };
   let pointer = { x: 400, y: 300 };
   let closed = false;
   const runtime = { workflow: { snapshot: async () => snapshot }, close: async () => {
@@ -54,6 +54,15 @@ app.whenReady().then(async () => {
   await capture("overview");
   assert.equal(await evaluate("document.querySelectorAll('.ticket').length"), states.length);
   assert.equal(await evaluate("document.getElementById('progress-label').textContent"), "3 / 11 已收口 · 1 已验收");
+  assert.match(await evaluate("document.getElementById('spec').selectedOptions[0].textContent"), /本轮全部票/);
+  const versionKey = JSON.stringify(["R35 · AI 出题工作台.md", "revision-two"]);
+  await evaluate(`document.getElementById('spec').value = ${JSON.stringify(versionKey)}; document.getElementById('spec').dispatchEvent(new Event('change'))`);
+  await until("document.querySelectorAll('.ticket').length === 2");
+  assert.equal(await evaluate("document.getElementById('progress-label').textContent"), "0 / 2 已收口 · 0 已验收");
+  await evaluate("document.getElementById('spec').value = 'current'; document.getElementById('spec').dispatchEvent(new Event('change'))");
+  await until("document.querySelectorAll('.ticket').length === 12");
+  result.specCycleIncludesAdditions = true;
+  await capture("spec-cycle-all-revisions");
   main.showInactive();
   await wait(500);
   assert.equal(await evaluate("document.getElementById('sprite').dataset.animation"), "写代码", "Blur must not close viewing mode");

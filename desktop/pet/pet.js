@@ -60,7 +60,7 @@ $("spec").onchange = () => api.select({ projectId: $("project").value, specKey: 
 function render(next) {
   view = next;
   options($("project"), next.projects.map(project => [project.id, project.name]), next.project?.id);
-  options($("spec"), next.specs.length ? [["current", "当前 Spec"], ...next.specs.map(spec => [spec.key, spec.file.split(/[\\/]/).at(-1) + " · " + spec.digest.slice(0, 6)])] : [["", "尚无已登记 Spec"]], next.spec?.key);
+  options($("spec"), next.scopes, next.selectionKey);
   $("spec").title = next.spec?.file ?? "";
   $("progress-label").textContent = next.spec ? `${next.completed} / ${next.total} 已收口 · ${next.accepted} 已验收` : "在主控会话登记 Spec 后查看进展";
   $("percentage").replaceChildren(document.createTextNode(String(next.percent)), element("span", "%"));

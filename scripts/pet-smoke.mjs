@@ -19,4 +19,5 @@ assert.equal(result.dragged, true);
 assert.equal(result.closedPageKeptPet, true);
 assert.equal(result.serviceClosedOnQuit, true);
 assert.equal(result.allTicketsVisibleInScrollableGroups, true);
+assert.equal(result.specCycleIncludesAdditions, true);
 console.log(JSON.stringify({ root, ...result }));

@@ -1,4 +1,4 @@
-import { specBoard } from "./spec-board.js";
+import { specBoard, specChoices } from "./spec-board.js";
 import { excerpt } from "./handoff-card.js";
 
 const closed = new Set(["ready", "trial", "accepted"]);
@@ -10,10 +10,10 @@ export function petProgress(snapshot, selection = {}) {
   const projects = snapshot.projects.map(({ id, name }) => ({ id, name }));
   const chosenProject = projects.find(project => project.id === selection.projectId);
   const project = chosenProject ?? projects[0];
-  const board = specBoard(snapshot.tasks ?? [], project?.id, !chosenProject || selection.specKey === "all" ? "current" : selection.specKey);
+  const board = specBoard(snapshot.tasks ?? [], project?.id, !chosenProject ? "current" : selection.specKey);
   const groups = ["closed", "active", "waiting"].map(id => ({ id, tickets: [] }));
   let completed = 0, accepted = 0, total = 0;
-  for (const task of board.selected?.tasks ?? []) {
+  for (const task of board.selected?.tasks ?? (board.selectionKey === "all" ? board.tasks : [])) {
     const retired = task.state === "superseded" || Boolean(task.releasedScope);
     const group = retired || closed.has(task.state) ? 0 : waiting.has(task.state) ? 2 : 1;
     if (!retired) { total++; if (closed.has(task.state)) completed++; if (task.state === "accepted") accepted++; }
@@ -25,6 +25,9 @@ export function petProgress(snapshot, selection = {}) {
   }
   for (const group of groups) group.tickets.sort((a, b) => a.key.localeCompare(b.key, "zh-CN", { numeric: true }));
   return { projects, project, specs: board.specs.map(({ key, file, digest }) => ({ key, file, digest })),
-    spec: board.selected ? { key: board.selected.key, file: board.selected.file, digest: board.selected.digest } : null,
+    cycles: board.cycles.map(({ key, file, versions, tasks }) => ({ key, file, versionCount: versions.length, ticketCount: tasks.length })),
+    scopes: specChoices(board), selectionKey: board.selectionKey,
+    spec: board.selected ? { key: board.selected.key, kind: board.selected.kind, file: board.selected.file, digest: board.selected.digest } :
+      board.selectionKey === "all" ? { key: "all", kind: "all", file: "全部项目任务" } : null,
     total, completed, accepted, percent: total ? Math.round(completed / total * 100) : 0, groups };
 }

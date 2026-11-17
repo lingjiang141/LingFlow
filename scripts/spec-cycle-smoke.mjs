@@ -1,0 +1,14 @@
+import {spawn} from 'node:child_process';
+import {mkdirSync,readFileSync} from 'node:fs';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+const root=path.resolve('.validation','spec-cycle-smoke-'+Date.now());mkdirSync(root,{recursive:true});
+const env={...process.env,LINGFLOW_SPEC_SMOKE_DIR:root};delete env.ELECTRON_RUN_AS_NODE;
+const child=spawn(path.resolve('node_modules/electron/dist/electron.exe'),['--disable-gpu','scripts/spec-cycle-smoke.cjs'],{env,windowsHide:true,stdio:['ignore','pipe','pipe']});
+let output='';child.stdout.on('data',b=>{output+=b;});child.stderr.on('data',b=>{output+=b;});
+const timer=setTimeout(()=>child.kill(),30000);
+const code=await new Promise((resolve,reject)=>{child.once('exit',resolve);child.once('error',reject);});clearTimeout(timer);
+assert.equal(code,0,output);
+const result=JSON.parse(readFileSync(path.join(root,'result.json'),'utf8'));
+assert.equal(result.cycleTickets,8);assert.equal(result.versionTickets,2);assert.equal(result.requirementsHidden,true);assert.equal(result.requirementsRetained,true);assert.deepEqual(result.errors,[]);
+console.log(JSON.stringify({root,...result}));

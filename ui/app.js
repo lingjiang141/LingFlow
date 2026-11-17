@@ -1,4 +1,4 @@
-import { specBoard } from "./spec-board.js";
+import { specBoard, specChoices } from "./spec-board.js";
 import { excerpt, handoffLines, handoffRecord } from "./handoff-card.js";
 import { formatQualitySummary, noticeQualitySummary, qualityDimensions, qualityStateLabel } from "./quality-summary.js";
 
@@ -735,14 +735,11 @@ function render() {
         return row;
       }),
   );
-  const { specs, current, selected, tasks: visibleTasks } = specBoard(state.tasks, projectId, specSelection.get(projectId));
+  const boardScope = specBoard(state.tasks, projectId, specSelection.get(projectId));
+  const { current, selected, tasks: visibleTasks } = boardScope;
   window.lingflowDesktop?.select({ projectId, specKey: specSelection.get(projectId) ?? "current" });
   const picker = $("spec-scope");
-  const scopes = [
-    ["current", current ? "当前规格 · " + current.file : "当前规格 · 未登记"],
-    ...specs.map((spec) => [spec.key, spec.file + " · " + spec.digest.slice(0, 8)]),
-    ["all", "全部任务（含未关联规格）"],
-  ];
+  const scopes = specChoices(boardScope);
   const optionsKey = JSON.stringify(scopes);
   if (picker.dataset.options !== optionsKey) {
     picker.replaceChildren(...scopes.map(([value, label]) => {
@@ -752,8 +749,7 @@ function render() {
     }));
     picker.dataset.options = optionsKey;
   }
-  const chosen = specSelection.get(projectId);
-  picker.value = chosen === "all" || specs.some((spec) => spec.key === chosen) ? chosen : "current";
+  picker.value = boardScope.selectionKey;
   picker.onchange = () => {
     specSelection.set(projectId, picker.value);
     render();
@@ -761,17 +757,11 @@ function render() {
   const count = (field, value) => visibleTasks.filter((task) => task[field] === value).length;
   const risks = Object.entries(riskLabels).map(([risk, label]) => label + " " + count("risk", risk));
   $("spec-summary").textContent = [
-    selected ? "冻结版本 " + selected.digest.slice(0, 8) : !current ? "尚无已登记规格" : null,
+    selected?.kind === "cycle" ? `规格周期 · ${selected.versions.length} 个冻结版本` : selected ? "冻结版本 " + selected.digest.slice(0, 8) : !current ? "尚无已登记规格" : null,
     "已验收 " + count("state", "accepted") + "/" + visibleTasks.length + " 张",
     ...risks,
     selected ? "只统计已登记票，未登记草稿不计入" : !current && picker.value !== "all" ? "下方显示全部任务" : null,
   ].filter(Boolean).join(" · ");
-  const requirementIds = new Set(visibleTasks.map((task) => task.requirementId));
-  const requirements = state.requirements.filter((r) => r.projectId === projectId && (!selected || requirementIds.has(r.id)));
-  $("requirements").replaceChildren(
-    ...(selected ? requirements : requirements.slice(-2))
-      .map((r) => node("div", "✓ 已确认需求：" + r.text, "requirement")),
-  );
   const groups = [
     ["进行中", ["queued", "assigned", "rework", "paused", "blocked"]],
     ["审查与处理", ["waiting_review", "waiting_verification", "waiting_batch", "reviewing", "changes_requested"]],
