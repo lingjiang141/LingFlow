@@ -2,11 +2,15 @@ export function compactCheck(job) {
   const receipt = job.receipt ?? {};
   return { id: job.id, taskId: job.taskId, check: { id: job.check.id, stage: job.check.stage }, state: job.state,
     classification: job.classification ?? null, environmentFailure: job.environmentFailure ?? receipt.environmentFailure ?? false,
+    ...(job.redEvidenceValid && {redEvidenceValid:true}),
     ...(job.reason && { reason: String(job.reason).slice(0, 100) }),
     ...(job.membersCanRetry !== undefined && { membersCanRetry: job.membersCanRetry }),
     ...(receipt.evidenceKind && {evidenceKind:receipt.evidenceKind,caseReadback:receipt.caseReadback}),
+    ...(job.environmentFailure && {matchedRule:job.matchedRule ?? receipt.matchedRule,elapsedMs:receipt.elapsedMs,
+      redEvidenceRequirement:job.redEvidenceRequirement ?? receipt.redEvidenceRequirement}),
     receipt: { exitCode: receipt.exitCode ?? null, failureOutputSeen: receipt.failureOutputSeen ?? false,
-      testCountSeen: receipt.testCountSeen ?? false, environmentFailure: receipt.environmentFailure ?? job.environmentFailure ?? false,
+      testCountSeen: receipt.testCountSeen === null ? null : receipt.testCountSeen ?? false, environmentFailure: receipt.environmentFailure ?? job.environmentFailure ?? false,
+      ...(receipt.environmentFailure && {evidenceKind:receipt.evidenceKind,matchedRule:receipt.matchedRule,redEvidenceRequirement:receipt.redEvidenceRequirement}),
       elapsedMs: receipt.elapsedMs ?? (Number.isFinite(receipt.finishedAt) && Number.isFinite(receipt.startedAt ?? job.startedAt) ? receipt.finishedAt - (receipt.startedAt ?? job.startedAt) : null) } };
 }
 export function checkStatusResponse(jobs, args) {

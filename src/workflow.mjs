@@ -3,6 +3,7 @@ import { inspectedEntities, selectWakeNotices, inspectionMetadata, inspectionCom
 import { operationIdIssue, commandSignature, writeSignatures, summarizeExample, testReviewEvidence } from "./compliance-errors.mjs";
 import { checkStatusResponse } from "./check-status-response.mjs";
 import { checkEvidenceFacts } from "./check-evidence.mjs";
+import { redEvidenceRequirement } from './evidence-facts.mjs';
 import { dependencyReceipt, dependencyReceiptValid, recoverAdmittedDependency } from "./dependency-receipts.mjs";
 import { cacheDiagnostics, promptMetrics, recordPromptAdmission } from "./cache-diagnostics.mjs";
 import { activeWake, normalizeWake, consumeWake, requeueWake, mergeWakeNotices, recoverLostWakes, auditWakeCoverage, wakeHealth, countDeliveryAttempts } from "./wake-state.mjs";
@@ -2206,7 +2207,7 @@ export class Workflow {
       if (!["launching", "uncertain"].includes(job.state) || (job.state === "uncertain" && receipt.uncertain)) return;
       let recordedOutput = "";
       try { if (output) recordedOutput = readFileSync(output, "utf8"); } catch {}
-      receipt = { ...receipt, ...detectEnvironmentFailure(receipt, recordedOutput, receipt.startedAt ?? job.startedAt) };
+      receipt = { ...receipt, ...detectEnvironmentFailure(receipt, recordedOutput, receipt.startedAt ?? job.startedAt, job.check) };
       receipt = {...receipt,...checkEvidenceFacts(job.check,receipt,recordedOutput)};
       if (receipt.environmentFailure) Object.assign(receipt, { failureOutputSeen: false, classification: "environment-failed", ...environmentRetry(job) });
       if (receipt.timedOut) receipt = { ...receipt, uncertain: true };
@@ -2264,9 +2265,12 @@ export class Workflow {
     const receipt = result.receipt;
     let output = "";
     try { if (result.output) output = readFileSync(result.output, "utf8"); } catch {}
-    const environment = detectEnvironmentFailure(receipt, output, receipt?.startedAt ?? job.startedAt);
+    const environment = detectEnvironmentFailure(receipt, output, receipt?.startedAt ?? job.startedAt, job.check);
     Object.assign(result, environment, ...(receipt ? [checkEvidenceFacts(job.check,{...receipt,...environment},output)] : []));
-    if (result.state === "passed") return;
+    if (result.state === "passed") {
+      if (job.check.stage === 'red') { result.redEvidenceValid = true; if (receipt) receipt.redEvidenceValid = true; }
+      return;
+    }
     if (result.state === "failed" && result.environmentFailure) {
       Object.assign(result, { classification: "environment-failed", error: environment.reason, ...environmentRetry(job) });
       return;
@@ -2278,15 +2282,16 @@ export class Workflow {
     }
     if (job.check.stage === "red" && result.state === "failed" && this.intactOutput(result) &&
         !redReceiptValid(job.check, receipt, readFileSync(result.output, "utf8")))
-      result.error ??= "红证据无效：需要真实断言失败和 failureOutputSeen=true；空跑、启动错误或截断日志不能作为红证据。先补齐冻结测试，在实现基线未变时重跑原 red 检查。";
+      result.error ??= '红证据无效：' + redEvidenceRequirement(result.evidenceKind) + '；failureOutputSeen 必须为 true。保持实现基线，重跑同一 red 检查。';
     if (result.state === "failed" && receipt?.id === job.id && !receipt.launchError && !receipt.signal &&
       !receipt.timedOut && !receipt.truncated && Number.isInteger(receipt.exitCode) && this.intactOutput(result)) {
       result.error ??= `检查 ${job.check.id} 实测退出码 ${receipt.exitCode}，预期 ${job.check.expectedExit}` +
         (receipt.expectedOutputSeen ? "" : "；缺少预期输出标记");
       if (job.check.stage !== "red" && receipt.exitCode !== job.check.expectedExit &&
-        job.check.failureOutput && receipt.failureOutputSeen) {
+        (job.check.failureOutput && receipt.failureOutputSeen || result.evidenceKind === 'probe' && receipt.exitCode !== 0 && result.errorStackSeen || result.evidenceKind === 'compile' && receipt.exitCode !== 0 && result.compileErrorSeen)) {
         result.classification ??= "quality-failed";
-        result.error += `；命中冻结的断言失败标记：${job.check.failureOutput}`;
+        result.error += job.check.failureOutput && receipt.failureOutputSeen ? `；命中冻结的断言失败标记：${job.check.failureOutput}` :
+          result.evidenceKind === 'compile' ? '；已观察到编译错误' : '；已观察到进程错误栈';
       }
     }
     result.classification ??= "evidence-missing";
@@ -2871,7 +2876,7 @@ abandonTask {taskId,reason}：仅主控可终止从未投递的 queued 票，或
 previewPlan：同一份参数预检，不派发、不冻结。返回 state、violations（path/expected/remedy）和范围派生；无论预检通过与否都不承诺在线。支持 sources.ticketsDir 或 sources.tickets 文件数组。sources 示例：{"spec":"spec.md","tickets":"tickets.md","attempts":"attempts.md"}；票面文件的 lingflow-contract JSON 围栏可冻结必改文件、必改测试与 AC；预检和派发共同核对，未采用围栏的旧规划兼容。
 approve {text,source}：仅 DSH 主控。登记用户已授权执行的目标和可观察验收条件。source 为用户确认的对话摘录或引用。仅讨论和未确认草稿不登记；沿用已有需求 ID。
 dispatch {requirementId,developerId,title,description,risk,readOnly:true,writes:[],reads,resources,dependencies:[任务ID]}：派给开发成员的纯只读调查。独立审查由高风险票交付后自动派发，沿用冻结候选及证据。
-dispatchPlan {requirementId,sources:{spec,tickets,attempts},tickets:[{key,developerId,title,description,brief?,boundaries?,stopConditions?,risk,riskReason?,readOnly?,writes,reads,resources,ownedDirty?,after:[{ticket或taskId,stage:"verified|accepted"}],verification}],batches?}：仅 DSH 主控。来源为项目相对文件。一次登记可前向引用的计划图。实施票的 verification={acceptance:[{id,text}],testWrites:[测试文件],checks:[{id,stage:"red|green|full|regression|independent|controller",argv:[程序,参数...],inputs:[相对路径],covers:[AC编号],expectedExit?,expectedOutput?,timeoutMs?}]}。红绿同命令及输入，红阶段声明真实断言失败标记。full 的 covers 并集覆盖全部 AC。regression 是开发回归门，covers=[]，不能替代 AC 证据；主控探针最多 60000ms。免审实施票至少一项 independent。确有必要时冻结 controller 收口探针。检查输入也参加并发冲突判断。共享数据库、端口及环境写进 resources。
+dispatchPlan {requirementId,sources:{spec,tickets,attempts},tickets:[{key,developerId,title,description,brief?,boundaries?,stopConditions?,risk,riskReason?,readOnly?,writes,reads,resources,ownedDirty?,after:[{ticket或taskId,stage:"verified|accepted"}],verification}],batches?}：仅 DSH 主控。来源为项目相对文件。一次登记可前向引用的计划图。实施票的 verification={acceptance:[{id,text}],testWrites:[测试文件],checks:[{id,stage:"red|green|full|regression|independent|controller",argv:[程序,参数...],inputs:[相对路径],covers:[AC编号],expectedExit?,expectedOutput?,timeoutMs?}]}。红绿同命令及输入，红阶段声明真实失败标记。evidenceKind 按 argv 推断：test 要求真实用例/断言；probe 红证据要求预期非零退出码、expectedOutput 和本进程 Error 错误栈（含 at）或 AssertionError，不强制 AssertionError 文案；compile 的 TS/SyntaxError 属于代码错误。failed-before-tests 的两秒规则仅用于 test；启动、缺依赖、信号和超时均不得作为红证据。full 的 covers 并集覆盖全部 AC。regression 是开发回归门，covers=[]，不能替代 AC 证据；主控探针最多 60000ms。免审实施票至少一项 independent。确有必要时冻结 controller 收口探针。检查输入也参加并发冲突判断。共享数据库、端口及环境写进 resources。
 允许票根 browserE2E，预检报告归并；Hive 票面可派生具名用例。快速模式默认零条浏览器 E2E。仅浏览器能证明关键 AC 时，在 verification.browserE2E 填 [{file:"e2e/feature.spec.ts",title:"关键行为",reason:"为何无法以 API 或组件测试证明",covers:["AC1"]}]。检查由开发执行，每条至少绑定一个 full 检查，inputs 包含该文件且 covers 包含相应 AC。argv 示例：${JSON.stringify(browserCheckArgv({ file: "e2e/feature.spec.ts", title: "关键行为" }))}。证据型浏览器命令绑定一个文件和字面标题；整文件或整套用 regression。主控和累计检查不能代跑，审查核对断言和实测。
 batches:[{key,tickets:[票编号],argv,inputs,resources,covers:[{ticket,acceptance:[AC编号]}],timeoutMs?,expectedOutput?}]：不同票确需同一次累计验证且候选能同时稳定时使用。成员票先过各自门槛，然后程序跑一次累计检查，通过才共同放行。retryBatch {batchId,reason} 对账后重跑。现场冲突可用 reviseBatch {batchId,reason,groups:[同样的批次定义]} 重新分组，保留全部原验收条款及历史。
 rebindCommittedWork {taskId,expectedBase,expectedHead,confirmPaths,confirmSourceAppends?,confirmRecordedBaseline?,reason}：仅主控。写集内提交默认阻断；用 diagnoseTask 核对，开发先停写交回。主控确认提交归属后可沿原票重绑。同分支快进、原写集可证明、冻结路径干净且无未完检查才允许。规划原文必须未变；若诊断证明仅在行边界追加 Markdown，可用诊断给出的 confirmSourceAppends 逐文件确认当前指纹。冻结时未提交、后来入库的记录型 Markdown 还须显式传 confirmRecordedBaseline；诊断会提供路径与指纹。确认只记审计，不改冻结规划或 AC。保留匹配的历史红证据，绿、完整检查及验收按新基线执行。不操作 Git 历史。

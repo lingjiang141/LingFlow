@@ -24,7 +24,7 @@ writeFileSync(
 
 function saveResult(result, output = "") {
   result = { ...result, startedAt, finishedAt: Date.now() };
-  result = { ...result, ...detectEnvironmentFailure(result, output) };
+  result = { ...result, ...detectEnvironmentFailure(result, output, startedAt, job.check) };
   result = { ...result, ...checkEvidenceFacts(job.check,result,output) };
   if (result.environmentFailure) Object.assign(result, { failureOutputSeen: false, classification: "environment-failed", ...environmentRetry(job) });
   writeFileSync(path.join(directory, "output.txt"), output, "utf8");
@@ -130,7 +130,7 @@ child.on("close", (exitCode, signal) => {
       stale: !matchesInputs(),
       expectedOutputSeen:
         !job.check.expectedOutput || output.includes(job.check.expectedOutput),
-      failureOutputSeen: job.check.stage === "red" ? redFailure(job.check, output) :
+      failureOutputSeen: job.check.stage === "red" ? exitCode === job.check.expectedExit && exitCode > 0 && redFailure(job.check, output) :
         Boolean(job.check.failureOutput && output.includes(job.check.failureOutput)),
     },
     output,

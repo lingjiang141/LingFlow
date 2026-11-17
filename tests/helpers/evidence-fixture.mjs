@@ -16,7 +16,7 @@ export async function fixture(t, marker = "AssertionError", options = {}) {
   const sources = { spec: "spec.md", tickets: "tickets.md", attempts: "attempts.md" };
   for (const file of Object.values(sources)) put(file, "approved");
   put("implementation.cjs", options.implementation ?? "module.exports = 'old';");
-  const testFile = "e2e/new-case.cjs";
+  const testFile = options.testFile ?? "e2e/new-case.cjs";
   if (options.existingTest) put(testFile, options.existingTest);
   const git = (...args) => execFileSync("git", args, { cwd: root, windowsHide: true, stdio: "ignore" });
   git("init"); git("add", "spec.md", "tickets.md", "attempts.md", "implementation.cjs");
@@ -43,15 +43,15 @@ export async function fixture(t, marker = "AssertionError", options = {}) {
   wf.heartbeat(roles.map(r => ({ id: r.name, state: "idle", pending: 0, jobs: 0 })));
   for (const role of roles) call(role.name, "inbox");
   const requirement = call("Lead", "approve", { text: "New behavior and new test", source: "approved" });
-  const checks = ["red", "green", "full", ...(options.risk && options.risk !== "high" ? ["independent"] : [])].map(stage => ({ id: stage, stage,
-    argv: ["node", testFile], inputs: [testFile, "implementation.cjs"], covers: ["AC1"],
+  const checks = options.checks ?? ["red", "green", "full", ...(options.risk && options.risk !== "high" ? ["independent"] : [])].map(stage => ({ id: stage, stage,
+    argv: options.argv ?? ["node", testFile], inputs: [testFile, "implementation.cjs"], covers: ["AC1"],
     ...(stage === "red" && { expectedOutput: marker }),
   }));
   const plan = call("Lead", "dispatchPlan", { requirementId: requirement.id, sources, tickets: [{
     key: "NEW-TEST", developerId: roles.find(r => r.kind === "developer").id,
     title: "New test", description: "New assertion", risk: options.risk ?? "high", riskReason: "critical behavior",
     writes: ["implementation.cjs", testFile], reads: [],
-    verification: { testWrites: [testFile], checks, acceptance: [{ id: "AC1", text: "new behavior" }] },
+    verification: { testWrites: [testFile], checks, ...(options.browserE2E && {browserE2E:options.browserE2E}), acceptance: [{ id: "AC1", text: "new behavior" }] },
   }] });
   const taskId = plan.tasks[0].taskId;
   const run = async (checkId, async = false, actor = "Dev") => {
