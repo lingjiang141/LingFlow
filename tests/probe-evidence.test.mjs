@@ -61,7 +61,9 @@ test('C: compile errors classify as quality while compile dependencies remain en
     f.wf.classifyCheck({id:receipt.id,taskId:f.taskId,check},result);
     assert.equal(result.classification,wanted,output);
     if(wanted==='environment-failed'){assert.equal(result.evidenceKind,'compile');assert.ok(result.matchedRule);assert.equal(result.elapsedMs,155);}
-    console.log(JSON.stringify({case:'C',output,classification:result.classification,matchedRule:result.matchedRule}));
+    // Actions problem matchers treat compiler-shaped negative fixtures as real errors.
+    const signature=output.includes('TS2345')?'TS2345':output.includes('SyntaxError')?'compile-syntax':'missing-dependency';
+    console.log(JSON.stringify({case:'C',signature,classification:result.classification,matchedRule:result.matchedRule}));
   }
 });
 test('probe receipts require an expected nonzero exit, expected output and real error stack, and share facts',()=>{
