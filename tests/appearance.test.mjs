@@ -168,6 +168,20 @@ test("外观导入的请求体上限放宽到 24 MiB，可容纳较大图片的 
   assert.deepEqual(readFileSync(path.join(assetRoot, asset.id + ".png")), big);
 });
 
+test("同一毫秒导入的图片仍按导入顺序倒序，重新打开和重复导入保持顺序", t => {
+  t.mock.timers.enable({apis:['Date'],now:1700000000000});
+  const root=path.join(sandbox('appearance-tied-clock-'),'assets');
+  const library=createAppearanceLibrary(root);
+  const first=library.importImage({name:'first',data:Buffer.concat([PNG,Buffer.from('a')]).toString('base64')}).asset;
+  const second=library.importImage({name:'second',data:Buffer.concat([PNG,Buffer.from('b')]).toString('base64')}).asset;
+  const third=library.importImage({name:'third',data:Buffer.concat([PNG,Buffer.from('c')]).toString('base64')}).asset;
+  assert.equal(first.addedAt,second.addedAt);assert.equal(second.addedAt,third.addedAt);
+  const expected=[third.id,second.id,first.id];
+  assert.deepEqual(library.list().assets.map(a=>a.id),expected);
+  library.importImage({name:'repeat first',data:Buffer.concat([PNG,Buffer.from('a')]).toString('base64')});
+  assert.deepEqual(createAppearanceLibrary(root).list().assets.map(a=>a.id),expected);
+});
+
 test("素材库自带格式嗅探、尺寸上限、失效条目剔除与倒序", async () => {
   const dataDir = sandbox("appearance-lib-");
   const root = path.join(dataDir, "assets");

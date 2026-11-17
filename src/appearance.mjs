@@ -146,8 +146,9 @@ export function createAppearanceLibrary(root = defaultAssetRoot) {
   const list = () => ({
     assets: readItems()
       .filter((item) => fileFor(item.id + "." + item.ext))
-      .map((item) => ({ item, asset: normalizeItem(item), at: timeOf(item.addedAt) }))
-      .sort((a, b) => b.at - a.at || a.asset.id.localeCompare(b.asset.id))
+      .map((item, index) => ({ asset: normalizeItem(item), at: timeOf(item.addedAt), index }))
+      // Imports append to the index; timestamp ties retain newest-first order.
+      .sort((a, b) => b.at - a.at || b.index - a.index)
       .map((entry) => entry.asset),
   });
 
