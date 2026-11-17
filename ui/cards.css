@@ -60,12 +60,12 @@ html:not([data-theme="dark"]) .role.has-media > .card-appearance {
 
 /* Keep text readable even if a full-opacity image contains both dark and bright areas. */
 .role.has-media {
-  --role-image-scrim: rgb(15 23 42 / 76%);
+  --role-image-scrim: linear-gradient(100deg, rgb(15 23 42 / 90%), rgb(15 23 42 / 68%) 48%, rgb(15 23 42 / 16%));
   --role-image-ink: #f8fafc;
 }
 
 html:not([data-theme="dark"]) .role.has-media {
-  --role-image-scrim: rgb(248 250 252 / 84%);
+  --role-image-scrim: linear-gradient(100deg, rgb(248 250 252 / 94%), rgb(248 250 252 / 76%) 48%, rgb(248 250 252 / 22%));
   --role-image-ink: #172033;
 }
 
@@ -97,4 +97,17 @@ html:not([data-theme="dark"]) .role.has-media {
 
 html:not([data-theme="dark"]) .role.has-media {
   box-shadow: 0 10px 24px rgba(28, 45, 74, 0.12);
+}
+html[data-wallpaper="1"] .column h3,
+html[data-wallpaper="1"] .task-list > .muted {
+  background: color-mix(in srgb, var(--lf-panel) 84%, transparent);
+  border-radius: 5px;
+  padding: 4px 6px;
+}
+.role.has-media > p,
+.role.has-media > small,
+.role.has-media .role-name {
+  background: color-mix(in srgb, var(--lf-surface) 74%, transparent);
+  border-radius: 5px;
+  padding: 2px 5px;
 }

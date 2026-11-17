@@ -772,11 +772,14 @@ function render() {
       const column = node("div", undefined, "column");
       const tasks = visibleTasks.filter((t) => states.includes(t.state));
       column.append(node("h3", title + " · " + tasks.length));
-      if (!tasks.length) column.append(node("p", "暂无任务", "muted"));
+      const list = node("div", undefined, "task-list");
+      column.append(list);
+      if (!tasks.length) list.append(node("p", "暂无任务", "muted"));
       for (const t of tasks) {
         const card = node("article", undefined, "task");
         card.tabIndex = 0;
         card.setAttribute("role", "button");
+        card.title = [t.ticketKey, t.title, taskStatus(t), t.waitReason, t.progress].filter(Boolean).join(" · ");
         card.onclick = () => detail(t);
         card.onkeydown = (e) => {
           if (e.key === "Enter") detail(t);
@@ -795,7 +798,7 @@ function render() {
         );
         if (t.progress) card.append(node("small", "最近进度：" + t.progress, "task-progress"));
         if (t.ownerSilentForMs > 0) card.append(node("small", `成员静默 ${Math.floor(t.ownerSilentForMs / 60000)} 分钟${t.ownerState === "silent" ? " · 可由主控恢复" : ""}`, "task-progress"));
-        column.append(card);
+        list.append(card);
       }
       return column;
     }),
