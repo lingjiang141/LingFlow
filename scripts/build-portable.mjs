@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { exportProject, projectRoot } from "./export-project.mjs";
@@ -16,7 +16,8 @@ if (actual.replace(/^v/, "") !== expected) throw Error("Electron runtime version
 const arch = spawnSync(path.join(runtime, "electron.exe"), ["-p", "process.arch"],
   { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8", windowsHide: true });
 if (arch.status !== 0 || arch.stdout.trim() !== "x64") throw Error("Electron runtime must be Windows x64.");
-mkdirSync(target, { recursive: true });
+// cpSync creates the new target. Pre-creating it conflicts with errorOnExist
+// on newer Node 24 releases; an existing destination must still be rejected.
 cpSync(runtime, target, { recursive: true, errorOnExist: true, force: false });
 renameSync(path.join(target, "electron.exe"), path.join(target, "LingFlow.exe"));
 const manifest = exportProject(path.join(target, "resources/app"));

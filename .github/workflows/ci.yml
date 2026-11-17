@@ -23,6 +23,8 @@ jobs:
         run: node scripts/export-project.mjs "$env:RUNNER_TEMP/LingFlow-source"
       - name: Build portable app
         run: node scripts/build-portable.mjs "$env:RUNNER_TEMP/LingFlow-win-x64"
+      - name: Verify portable app
+        run: node scripts/desktop-smoke.mjs "$env:RUNNER_TEMP/LingFlow-win-x64/LingFlow.exe"
       - uses: actions/upload-artifact@v4
         with:
           name: LingFlow-source
