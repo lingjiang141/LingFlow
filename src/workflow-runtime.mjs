@@ -6,7 +6,7 @@ const readCommands = new Set([
   "guide", "schema", "context", "operation", "checkStatus", "inspectPlan",
   "messages", "list", "inspect", "scopePreview", "cacheDiagnostics",
 ]);
-const evidenceCommands = new Set(["checkEvidence", "deliveryEvidence", "previewPlan", "diagnoseTask"]);
+const evidenceCommands = new Set(["checkEvidence", "deliveryEvidence", "previewPlan", "diagnoseTask", "governance"]);
 const heartbeatBudgetMs = 650;
 
 async function startWorker(dataDir, readOnly, execution) {

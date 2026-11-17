@@ -1,5 +1,5 @@
 import { executionFacts, redEvidenceRequirement } from './evidence-facts.mjs';
-export const environmentFailureHint = '先跑 npm run build 或修复本机依赖，不算票面红/绿证据';
+export const environmentFailureHint = '责任开发成员先跑 npm run build 或修复本机依赖，不算票面红/绿证据；主控不得在本机执行该命令后自称已验';
 
 export function detectEnvironmentFailure(receipt = {}, output = '', startedAt = receipt?.startedAt, check) {
   receipt ??= {};
@@ -36,7 +36,9 @@ export function environmentRetry(job) {
   return { hint: environmentFailureHint, membersCanRetry: !job.batchId,
     nextAction: job.batchId
       ? { command: 'retryBatch', args: { batchId: job.batchId, reason: '环境修复后重跑原累计检查' }, argv: job.check.argv, inputs: job.check.inputs }
-      : { command: 'check', args: { taskId: job.taskId, checkId: job.check.id }, argv: job.check.argv, inputs: job.check.inputs } };
+      : { command: 'check', ownerRole:['independent','controller'].includes(job.check.stage)?'controller':'developer',ownerId:job.requester,
+        message:['independent','controller'].includes(job.check.stage)?'主控仅通过 check 重跑本票冻结短探针':'该证据只能由责任开发成员重跑产生；主控不得在本机执行该命令后自称已验',
+        args: { taskId: job.taskId, checkId: job.check.id,...(job.ticketKey&&{ticketKey:job.ticketKey}) }, argv: job.check.argv, inputs: job.check.inputs } };
 }
 
 export function taskEnvironmentFailure(jobs) {

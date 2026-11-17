@@ -10,6 +10,7 @@ import { coversPath, fingerprint, overlaps, ownershipFingerprints, scopePaths } 
 import { commandProgress, gitCommandTimeout } from "./execution-policy.mjs";
 import { ownershipPolicy } from "./ownership-policy.mjs";
 import { preparationContract } from "./check-preparation.mjs";
+import { probeSeparationIssues } from './probe-separation.mjs';
 
 const stages = ["red", "green", "full", "regression", "independent", "controller"];
 export const dimensions = ["requirements", "implementation", "system"];
@@ -200,6 +201,8 @@ export function readVerification(input, { root, writes, risk, warnings = [], pre
     if (issues.length===before) checks.push({ id, stage, argv, covers, inputs, timeoutMs, expectedExit, expectedOutput, ...(failureOutput&&{failureOutput}), ...(preparation.requiredArtifacts?.length && preparation) });
   }
   alignBrowserArgv(checks, input.browserE2E, warnings, prefix, entries);
+  for(const issue of probeSeparationIssues(checks))add('.checks.'+issue.checkId+'.'+issue.field,issue.message,
+    {separateFrom:issue.developerCheckId},'使用实际独立、低负载且输入范围较小的探针；不复制开发 full/regression，缺证用 rework + evidence 回投责任成员');
   const recipe = (check) => JSON.stringify([check.argv,[...check.covers].sort(),check.inputs, check.preSteps ?? [], check.requiredArtifacts ?? []]);
   for (const green of checks.filter((c)=>c.stage==="green")) {
     const raw = entries.find((c)=>c?.id===green.id);
@@ -277,7 +280,7 @@ export function threeDimensions(input, checks) {
   );
 }
 
-function readGit(root, args, encoding = "utf8") {
+export function readGit(root, args, encoding = "utf8") {
   try { return execFileSync(
     "git",
     ["--no-optional-locks", "-c", "core.fsmonitor=false", ...args],

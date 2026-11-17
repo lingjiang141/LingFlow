@@ -37,13 +37,23 @@
 
 ## 原票被后继票替代或退出调度
 
-主控使用 `supersede {taskId,supersededBy,reason}`。旧票必须处于 `paused` 或 `blocked`，且没有 queued/launching/uncertain 的检查；责任人仍在执行的票须先停写并 `yieldForSchedule`。旧写集相对于当前 Git 工作区必须干净：暂存、未暂存和未跟踪改动都会阻断，被 Git 忽略但位于旧写集内的文件也不会被隐藏。原基线已经漂移或冻结契约已不可满足，不妨碍在上述条件下替代旧票。
+主控使用 `supersede {taskId,supersededBy,reason}`。旧票必须处于 `paused` 或 `blocked`，且没有 queued/launching/uncertain 的检查；责任人仍在执行的票须先停写并 `yieldForSchedule`。写集存在暂存、未暂存、未跟踪或被 Git 忽略的在途改动时，释放回执显式给出 `handoff:{ticketKey,writes,ownedDirty,instruction}` 和 `nextAction:{command:"dispatchPlan",args:...}`。文件原样保留，由开发成员承接，主控不得接手实现或代为提交；工作树干净时省略 handoff。承接提案不等于新增授权，仍须 previewPlan、规划正文和归属准入校验。原基线已经漂移或冻结契约已不可满足，不妨碍在上述条件下替代旧票。
 
 替代后旧票为 `superseded`，退出读集、写集、检查输入及共享资源的并发占用；保留原范围、冻结契约、基线、报告、审查、检查作业和日志，通过 `inspect {taskId}`、`checkEvidence {jobId}` 仍可读取。审计记录包含主控、原因、时间和后继票。后继票同项目且未收尾，原有等待票的依赖转向后继票；后继票移除对旧票的自等待并继承旧票的其他前置，verified/accepted 门槛不会降低，存在依赖环时整次操作被拒绝。旧票不因此成为“已验收”；后继票满足其余准入条件后立即进入调度。
 
-仅需释放收尾票时，主控可用 `releaseSchedule {taskId,reason}`。暂停的实施票也可使用 `reviseSchedule {taskId,writes:[],reason}`，不要混传其他调度调整。两者执行相同停写、干净写集和检查收口门禁，保存 `releasedScope` 快照并清空当前 writes；原票保持 paused/blocked，不再自动准入，其冻结检查也不再占用读集。剩余工作应使用后继票，不能借空写集将实施票变成免验收票。已释放范围的票再被替代时，仍按保存的原写集检查是否有残留改动。
+仅需释放收尾票时，主控可用 `releaseSchedule {taskId,reason}`。暂停的实施票也可使用 `reviseSchedule {taskId,writes:[],reason}`，不要混传其他调度调整。两者执行相同停写和检查收口门禁，保存 `releasedScope` 快照并清空当前 writes；原票保持 paused/blocked，不再自动准入，其冻结检查也不再占用读集。`abandonTask` 同样提供在途改动承接回执。已释放票不能再次释放、confirmCommit 或 rebindCommittedWork；诊断发现原写集仍有改动时分类为 `controller-takeover-risk`，直接返回含 ownedDirty 的承接参数。
 
 冲突回执带 `peerState`、`remedy` 和 `nextAction`。对同项目的 paused/blocked 对端，已有后继票 ID 时会给出完整 `supersede` 参数；其他情况先 `inspect`，不会指示主控强制终止 active 票。`schema {command:"supersede|releaseSchedule"}` 可分别查询新命令的约束。使用稳定 operationId 重试读取同一回执。
+
+## 主控边界、证据回投与提交审计（F25/F26）
+
+主控不得写业务代码、执行 red/green/full/regression、e2e 或 npm run build 等构建。只允许通过 `check` 提交冻结的 independent/controller 探针，时限仍为 60000ms。相同开发命令、相同入口追加参数、覆盖 full 全部 inputs 和 covers 的复制探针，以及通过 shell/子进程转发的包装探针均被拒绝。full 的全部 AC 覆盖门槛保持不变。
+
+`diagnoseTask` 的证据阻塞返回 `nextAction.ownerRole` 与 `ownerId`。开发检查始终指向原票 developerId，与在线情况无关；主控只能执行 ownerRole=controller 的冻结探针。已交付票缺证时，`nextAction.returnToOwner` 给出主控可执行的 `rework {taskId,reason,evidence:[checkId]}`；`nextAction.command=check` 是责任开发成员的动作。仍在实施的票由原开发成员沿原票重跑，主控不会代跑。
+
+`rework.evidence` 只接受本票冻结的非主控检查 id。`task.reworkEvidence` 保存待办；成员 inbox 逐条列出检查 id、上次 classification 和原因。指定检查通过新有效回执后逐项移除。记录本次返工要求的 revision，防止旧通过记录被复用来消除待办；未被指定且仍有效的其它证据可以复用。
+
+`governance {limit:50}` 为只读命令，无需 operationId。主控只可查看本项目，工作台可按 projectId 选择项目。最多扫描最近50个提交，返回每个项目的 `{commit,ticketKey,files,at,kind}` 记录。未曾 summarize 的票，提交触及其 writes 时记录 in-flight-work-committed；释放后提交则记录 released-work-committed。新释放审计保存当时 Git HEAD，避免同一秒内提交与释放的先后关系被时间戳误判。结果表示范围和流程风险，不能据 Git 作者名证明是主控或开发者实际提交。
 
 上述命令只更新 LingFlow 状态和审计，不提交、回滚、修改项目文件或改写 Git 历史。写集尚有内容时保留现场，由主控先核对归属。累计验证批次的契约不会自动改写，涉及旧票的分组仍须主控沿原批次核对。
 

@@ -48,6 +48,8 @@ setTimeout(() => {
 }, process.argv.includes("full") ? 1400 : 0);
 `;
   writeFileSync(path.join(root, "verify.cjs"), checkProgram);
+  for (const suffix of ['', '-b']) writeFileSync(path.join(root, `probe${suffix}.cjs`),
+    `require('node:assert/strict').equal(require('node:fs').readFileSync('feature${suffix}.txt','utf8'),'new'); console.log('behavior confirmed');`);
   writeFileSync(
     path.join(root, "verify-b.cjs"),
     checkProgram
@@ -77,6 +79,8 @@ process.exitCode = result ? 0 : 1;
     "attempts.md",
     "feature.txt",
     "verify.cjs",
+    "probe.cjs",
+    "probe-b.cjs",
     "feature-b.txt",
     "verify-b.cjs",
     "cumulative.cjs",
@@ -161,9 +165,9 @@ process.exitCode = result ? 0 : 1;
     {
       id: "independent",
       stage: "independent",
-      argv: ["node", "verify.cjs", "independent"],
+      argv: ["node", "probe.cjs"],
     },
-  ].map((check) => ({ ...check, inputs, covers: ["AC1"] }));
+  ].map((check) => ({ ...check, inputs:check.stage==='independent'?['probe.cjs','feature.txt']:inputs, covers: ["AC1"] }));
   const ticket = {
     key: "A",
     developerId: roles.DevA.id,
@@ -627,9 +631,9 @@ test("independent reviewers, controller short probes and a single cumulative rec
       checks: f.ticket.verification.checks.map((check) => ({
         ...check,
         argv: check.argv.map((arg) =>
-          arg === "verify.cjs" ? "verify-b.cjs" : arg,
+          arg === "verify.cjs" ? "verify-b.cjs" : arg==='probe.cjs'?'probe-b.cjs':arg,
         ),
-        inputs: ["verify-b.cjs", "behavior-b.txt", "feature-b.txt"],
+        inputs: check.stage==='independent'?['probe-b.cjs','feature-b.txt']:["verify-b.cjs", "behavior-b.txt", "feature-b.txt"],
       })),
     },
   };
@@ -772,12 +776,14 @@ test("native plan preflight and dispatch reject browser evidence that is missing
   ticket.verification.checks.push(check);
   const independent = ticket.verification.checks.find((item) => item.stage === "independent");
   const probeArgv = independent.argv;
+  const probeInputs = independent.inputs;
   independent.argv = check.argv;
   independent.inputs = check.inputs;
   assert.ok((await f.call("Lead", "previewPlan", fixture)).violations.some((item)=>/浏览器 E2E 由责任开发/.test(item.message)));
   independent.argv = ["npm", "test"];
   assert.ok((await f.call("Lead", "previewPlan", fixture)).violations.some((item)=>/低负载短探针/.test(item.message)));
   independent.argv = probeArgv;
+  independent.inputs = probeInputs;
   assert.equal((await f.call("Lead", "previewPlan", fixture)).state, "valid");
   const plan = await f.call("Lead", "dispatchPlan", fixture);
   const taskId = plan.tasks[0].taskId;
@@ -795,7 +801,7 @@ test("native plan preflight and dispatch reject browser evidence that is missing
 
 
 test("mandatory controller duties survive custom behavior, startup and compact wakes", async () => {
-  const { CONTROLLER_CHECK_BOUNDARY } = await import("../src/verification-policy.mjs");
+  const { CONTROLLER_CHECK_BOUNDARY, CONTROLLER_WAKE_BOUNDARY } = await import("../src/verification-policy.mjs");
   const { markContextSeen, wakeText } = await import("../src/role-context.mjs");
   const project = { id: "P", name: "Project", root: "E:/Project", controllerPolicy: "用户习惯" };
   const role = { id: "L", name: "Lead", kind: "controller", seenContextRevision: 1, seenSupervisionPolicy: 1 };
@@ -807,7 +813,7 @@ test("mandatory controller duties survive custom behavior, startup and compact w
   const compact = wakeText(project, role, true, "收到开发交付");
   assert.match(compact, /收到开发交付/);
   assert.doesNotMatch(compact, /角色上下文/);
-  assert.ok(compact.includes(CONTROLLER_CHECK_BOUNDARY));
+  assert.ok(compact.includes(CONTROLLER_WAKE_BOUNDARY));
 });
 
 test("unrelated Git commits preserve original red, green and full receipts after a safe baseline rebind", async (t) => {
@@ -1158,7 +1164,7 @@ async function r35Plan(t) {
         {...focused,id:"browser-full",stage:"full"},
         {id:"full",stage:"full",argv:["node","verify.cjs"],inputs:["verify.cjs",page,...(i===1?[api]:[])],covers:other},
         {id:"regression",stage:"regression",argv:cli,inputs:[e2e,page],covers:[]},
-        {id:"independent",stage:"independent",argv:["node","verify.cjs","independent"],inputs:["verify.cjs",page],covers:[other[0]],timeoutMs:60000}
+        {id:"independent",stage:"independent",argv:["node","-e",`require('node:assert/strict').ok(require('node:fs').statSync(${JSON.stringify(page)}).isFile())`],inputs:[page],covers:[other[0]],timeoutMs:60000}
       ]}};
   });
   const plan={requirementId:f.requirement.id,sources:{spec:r35Dir+"/spec.md",attempts:r35Dir+"/planned-attempts.md",ticketsDir:r35Dir+"/issues"},tickets};

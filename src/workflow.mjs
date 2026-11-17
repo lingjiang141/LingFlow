@@ -21,6 +21,8 @@ import { wakeDelay } from "./wake-policy.mjs";
 import { artifactsIntact } from "./check-preparation.mjs";
 import { reconcileRoleDuplicates } from "./role-duplicates.mjs";
 import { assertStoppedTask, includeIgnoredScopeWrites, originalTaskWrites, releasedTaskScope, releaseStoppedScope, supersedeStoppedTask, abandonStoppedTask, supersessionHint, scopeConflictRemedy, taskScopeSchemas } from "./task-scope.mjs";
+import { releaseHandoff, projectGovernance, evidenceNextAction, takeoverMessage, releasedConfirmationMessage, developerEvidenceMessage } from './controller-governance.mjs';
+import { probeSeparationIssues } from './probe-separation.mjs';
 import { commandTimeout, executionPolicy } from "./execution-policy.mjs";
 import {
   CONTROLLER_POLICY,
@@ -614,6 +616,10 @@ export class Workflow {
         need(role?.kind === "controller" && find(state.requirements, args.requirementId).projectId === role.projectId, "仅本项目主控可预检计划");
         return { state: "unavailable", evidence };
       }
+      if(command==='governance') {
+        need(!role||role.kind==='controller'&&(args.projectId===undefined||args.projectId===role.projectId),'仅本项目主控可读取治理记录');
+        return {state:'unavailable',records:[],evidence,nextAction:{command:'governance',args}};
+      }
       if (command === "checkEvidence") {
         const job = find(state.checkJobs, args.jobId);
         need(!role || job.projectId === role.projectId, "不可跨项目读取");
@@ -623,7 +629,8 @@ export class Workflow {
       need(!role || task.projectId === role.projectId, "不可跨项目读取");
       return { taskId: task.id, state: task.state, candidate: task.candidate, deliveredAt: task.deliveredAt ?? null, ...this.taskDelivery(state, task),
         classification: "evidence-missing", reason: "本地 Git 或文件证据暂不可用", evidence,
-        nextAction: { command: "inspect", args: { taskId: task.id } } };
+        nextAction: { command: "inspect", ownerRole:'developer',ownerId:task.developerId,
+          args: { taskId: task.id,ticketKey:task.ticketKey },message:developerEvidenceMessage } };
     }
     if (command === "operation") return this.store.receipt(scope, args.id);
     if (command === "guide") return { guide: GUIDE, examples: commandExamples };
@@ -677,6 +684,17 @@ export class Workflow {
       return channel.slice(-50);
     }
     if (command === "list") return this.view(state, role);
+    if (command === 'governance') {
+      need(!role || role.kind==='controller', '仅本项目主控可读取治理记录');
+      need(!role || args.projectId===undefined || args.projectId===role.projectId, '不可跨项目读取');
+      const limit=args.limit??50;
+      need(Number.isSafeInteger(limit)&&limit>=1&&limit<=50, 'governance limit 必须为 1–50');
+      const projectId=role?.projectId??args.projectId;
+      if(projectId!==undefined)find(state.projects,projectId);
+      const projects=state.projects.filter(project=>projectId===undefined||project.id===projectId).map(project=>({projectId:project.id,
+        ...projectGovernance(project.root,state.tasks.filter(task=>task.projectId===project.id),limit)}));
+      return {limit,projects,records:projects.flatMap(project=>project.records.map(record=>({projectId:project.projectId,...record})))};
+    }
     if (command === 'cacheDiagnostics') {
       const member=find(state.roles,args.roleId);
       need(!role||member.projectId===role.projectId,'不可跨项目读取');
@@ -1155,9 +1173,10 @@ export class Workflow {
           need(currentRole?.kind === "controller" && currentRole.projectId === task.projectId, "仅本项目主控可替代原票");
           assertStoppedTask(s, task);
           const successor = find(s.tasks, args.supersededBy);
-          const audit = { reason: text(args.reason, "替代原因"), by: currentRole.id, at: Date.now() };
           const git = this.scopeReleaseGit(s, task);
+          const audit = { reason: text(args.reason, "替代原因"), by: currentRole.id, at: Date.now(), head: git.head };
           result = supersedeStoppedTask(s, task, successor, git, audit);
+          Object.assign(result,releaseHandoff(s,task,git));
           this.retire(s, task.id);
           this.notice(s, task.developerId, "superseded:" + task.id, "原票已被替代，停止原票工作并保留证据：" + task.title, task.id);
           break;
@@ -1165,8 +1184,10 @@ export class Workflow {
         case 'abandonTask': {
           const task=find(s.tasks,args.taskId);
           need(currentRole?.kind==='controller'&&currentRole.projectId===task.projectId,'仅本项目主控可终止原票');
-          const audit={reason:text(args.reason,'终止原因'),by:currentRole.id,at:Date.now()};
-          result=abandonStoppedTask(s,task,this.scopeReleaseGit(s,task),audit);
+          const git=this.scopeReleaseGit(s,task);
+          const audit={reason:text(args.reason,'终止原因'),by:currentRole.id,at:Date.now(),head:git.head};
+          result=abandonStoppedTask(s,task,git,audit);
+          Object.assign(result,releaseHandoff(s,task,git));
           this.retire(s,task.id);this.store.event('abandon-task',{taskId:task.id,...audit});
           break;
         }
@@ -1194,6 +1215,7 @@ export class Workflow {
           const task = find(s.tasks, args.taskId);
           lead(task.projectId);
           need(currentRole?.kind === "controller", "仅本项目主控可确认提交归属");
+          verify(!releasedTaskScope(task),'contract-invalid',releasedConfirmationMessage);
           need(task.state === "paused" && !task.candidate, '重绑顺序：1. diagnoseTask {taskId} 获取 nextAction；2. 已交付票由主控 rework {taskId,adjustScope:true,reason} 暂停，活动票由开发停写后 yieldForSchedule {taskId,reason}；3. 再 diagnoseTask，复制 nextAction.args 调 rebindCommittedWork。');
           const reason = text(args.reason, "主控确认提交归属的理由");
           need(reason !== "填写核对提交差异和归属的实际依据", "请填写主控核对提交差异和归属的实际依据");
@@ -1344,7 +1366,7 @@ export class Workflow {
           need(args.async === undefined || typeof args.async === "boolean", "async 须为布尔值");
           const project = find(s.projects, task.projectId);
           const running = s.checkJobs.find((job) => job.taskId === task.id && job.check.id === check.id && activeCheck(job));
-          const job = { id: id(), taskId: task.id, projectId: task.projectId, root: project.root,
+          const job = { id: id(), taskId: task.id, ticketKey:task.ticketKey, projectId: task.projectId, root: project.root,
             check, files: this.checkPaths(task, check), revision: task.revision, scheduleVersion: task.scheduleVersion ?? 0, requester: currentRole.id,
             state: "queued", createdAt: Date.now(), ...(source && { source }) };
           if (args.async) {
@@ -1355,7 +1377,7 @@ export class Workflow {
             break;
           }
           // Keep pre-policy frozen responsibilities resumable under their original terms.
-          if (task.verification.browserE2E) assertCheckOwnership(project.root, check, task.verification.browserE2E);
+          if (leadCheck(check) || task.verification.browserE2E) assertCheckOwnership(project.root, check, task.verification.browserE2E);
           const scope = this.verifyScope(s, task);
           const input = this.checkInput(project.root, task, check);
           const notes = planningSourceNotes(project.root, task, s.plans.find((item) => item.id === task.planId));
@@ -1545,6 +1567,17 @@ export class Workflow {
         case "rework": {
           const task = find(s.tasks, args.taskId);
           lead(task.projectId);
+          verify(!releasedTaskScope(task),'contract-invalid',releasedConfirmationMessage);
+          const allowedEvidence=(task.verification?.checks??[]).filter(check=>!leadCheck(check)).map(check=>check.id);
+          need(args.evidence===undefined || Array.isArray(args.evidence)&&args.evidence.length<=allowedEvidence.length&&
+            args.evidence.every(checkId=>typeof checkId==='string'&&allowedEvidence.includes(checkId))&&new Set(args.evidence).size===args.evidence.length,
+            'evidence 必须是本票冻结的非主控检查 id 数组；可选 id：'+allowedEvidence.join('、'));
+          const reworkEvidence=args.evidence??[];
+          const evidenceItems=reworkEvidence.map(checkId=>{
+            const job=s.checkJobs.findLast(job=>job.taskId===task.id&&job.check.id===checkId);
+            return {checkId,classification:job?.classification??(job?.state==='passed'?'passed':'evidence-missing'),
+              reason:job?.error??job?.reason??job?.receipt?.reason??job?.environmentFailureReason??'未取得可核对的有效回执'};
+          });
           need(
             [
               "changes_requested",
@@ -1583,7 +1616,12 @@ export class Workflow {
           task.reportedAt = null;
           task.scheduleVersion = (task.scheduleVersion ?? 0) + 1;
           task.reworkReason = text(args.reason, "返工原因");
+          task.reworkEvidence=[...reworkEvidence];
+          task.reworkEvidenceDetails=evidenceItems;
+          task.reworkEvidenceRevisions={...task.reworkEvidenceRevisions,...Object.fromEntries(reworkEvidence.map(checkId=>[checkId,task.revision]))};
           this.retire(s, task.id);
+          if(evidenceItems.length)this.notice(s,task.developerId,`rework-evidence:${task.id}:${task.revision}`,
+            `返工证据清单 ${task.ticketKey??task.id}：`+evidenceItems.map(item=>`${item.checkId} · ${item.classification} · ${item.reason}`).join('\n'),task.id);
           result = { taskId: task.id, revision: task.revision, ...(args.adjustScope && { state: "paused" }) };
           break;
         }
@@ -1620,6 +1658,7 @@ export class Workflow {
             "候选输入已变化，需重新交付",
           );
           task.trialInstructions = text(args.instructions, "试用步骤");
+          task.summarizedAt??=Date.now();
           task.state = "trial";
           const notes = task.verification ? planningSourceNotes(find(s.projects, task.projectId).root, task, s.plans.find((item) => item.id === task.planId)) : [];
           result = { state: "awaiting_user", verificationMode: verificationMode(task), ...(notes.length && { sourceNotes: notes }) };
@@ -1811,6 +1850,7 @@ export class Workflow {
     }
   }
   confirmCommit(s, task, args, role, operationId) {
+    verify(!releasedTaskScope(task),'contract-invalid',releasedConfirmationMessage);
     verify(task.candidate&&['waiting_verification','waiting_review','reviewing','waiting_batch','ready','trial'].includes(task.state),
       'contract-invalid','confirmCommit 仅确认已交付候选的等价提交；没有候选时请 diagnoseTask 后沿原 rebindCommittedWork 路径重跑。');
     const reason=text(args.reason,'确认提交依据'),root=find(s.projects,task.projectId).root;
@@ -1840,9 +1880,10 @@ export class Workflow {
     const task = find(s.tasks, args.taskId);
     need(role?.kind === "controller" && role.projectId === task.projectId, "仅本项目主控可释放原票范围");
     assertStoppedTask(s, task);
-    const audit = { reason: text(args.reason, "释放原因"), by: role.id, at: Date.now() };
     const git = this.scopeReleaseGit(s, task);
+    const audit = { reason: text(args.reason, "释放原因"), by: role.id, at: Date.now(), head: git.head };
     const result = releaseStoppedScope(s, task, git, audit);
+    Object.assign(result,releaseHandoff(s,task,git));
     this.retire(s, task.id);
     return result;
   }
@@ -1884,9 +1925,17 @@ export class Workflow {
   diagnoseTask(s, task) {
     const action = (command, fields = {}) => ({ command, args: { taskId: task.id, ...fields } });
     let sourceNotes = [];
-    const result = (classification, reason, nextAction, extra = {}) => ({
-      taskId: task.id, state: task.state, classification, reason, nextAction, ...(sourceNotes.length && { sourceNotes }), ...extra,
-    });
+    const result = (classification, reason, nextAction, extra = {}) => {
+      if(nextAction&&!nextAction.ownerRole&&['evidence-missing','environment-failed','checks-missing'].includes(classification)) {
+        nextAction={...nextAction,ownerRole:'developer',ownerId:task.developerId,args:{...nextAction.args,ticketKey:task.ticketKey},
+          message:developerEvidenceMessage};
+      }
+      return {taskId: task.id, state: task.state, classification, reason, nextAction, ...(sourceNotes.length && { sourceNotes }), ...extra};
+    };
+    if(releasedTaskScope(task)) {
+      const handoff=releaseHandoff(s,task,this.scopeReleaseGit(s,task));
+      if(handoff.handoff)return result('controller-takeover-risk',takeoverMessage,handoff.nextAction,{message:takeoverMessage,handoff:handoff.handoff});
+    }
     if (task.state === "superseded") return result("superseded", "原票已被替代，全部调度范围已释放；历史证据保留，不代表已验收。",
       { command: "inspect", args: { taskId: task.supersededBy } }, { supersededBy: task.supersededBy });
     if(task.state==='abandoned') return result('abandoned','原票已终止，范围已释放，历史保留；不代表已验收。',null,{abandonment:task.abandonment});
@@ -1987,9 +2036,10 @@ export class Workflow {
         const input = this.checkInput(root, task, check);
         const job = s.checkJobs.findLast((item) => item.taskId === task.id && item.check.id === check.id &&
           item.revision === task.revision && item.input === input);
+        const nextAction=evidenceNextAction(task,check,controller(s,task.projectId)?.id);
         return result(job?.classification ?? "evidence-missing", `检查 ${check.id}：${job?.error ?? "缺少有效回执"}`,
-          job?.classification === "environment-failed" ? job.nextAction : job ? { command: activeCheck(job) ? "checkStatus" : "checkEvidence", args: activeCheck(job) ? { taskId: task.id } : { jobId: job.id } }
-            : action("check", { checkId: check.id }), { blocker: "checks-missing", checkId: check.id,
+          nextAction, { message:nextAction.message,blocker: "checks-missing", checkId: check.id,
+              ...(job&&{evidence:{command:activeCheck(job)?'checkStatus':'checkEvidence',args:activeCheck(job)?{taskId:task.id}:{jobId:job.id}}}),
               ...(job?.environmentFailure && { environmentFailure: true, environmentFailureReason: job.environmentFailureReason,
                 hint: job.hint, membersCanRetry: job.membersCanRetry }) });
       };
@@ -2086,6 +2136,11 @@ export class Workflow {
       ? role.kind === "controller" && task.state === "waiting_verification"
       : role.id === task.developerId && ["assigned", "rework"].includes(task.state),
     "该检查不属于当前角色或阶段");
+    if(leadCheck(check)) {
+      const issue=probeSeparationIssues(task.verification.checks).find(issue=>issue.checkId===check.id);
+      verify(!issue,'contract-invalid',issue?.message);
+      verify(check.timeoutMs<=60000,'contract-invalid','主控冻结探针最多 60000ms，不得扩充为开发 full/regression');
+    }
   }
   checkPrerequisites(s, task, check, root) {
     if (check.stage === "red")
@@ -2111,6 +2166,7 @@ export class Workflow {
     const red = check.stage === "red";
     const input = red ? this.redProof(root, task, check) : this.checkInput(root, task, check);
     return s.checkJobs.findLast((job) => job.taskId === task.id && job.check.id === check.id &&
+      job.revision >= (task.reworkEvidenceRevisions?.[check.id]??0) &&
       job.state === "passed" && !job.receipt?.environmentFailure && (red || artifactsIntact(root, job.receipt?.preparation)) && (red ? (job.redProofVersion === 2
         ? job.redProof === redEvidence(root, task, check, job.redImplementationBaseline, 2).redProof &&
           job.redTestProof === fingerprint(root, task.verification.testWrites)
@@ -2160,7 +2216,7 @@ export class Workflow {
           "contract-invalid", "检查责任在启动前已变化");
         const scope = this.verifyScope(s, task);
         const input = this.checkInput(project.root, task, job.check);
-        if (task.verification.browserE2E) assertCheckOwnership(project.root, job.check, task.verification.browserE2E);
+        if (leadCheck(job.check) || task.verification.browserE2E) assertCheckOwnership(project.root, job.check, task.verification.browserE2E);
         if (job.preparing) {
           this.checkResponsibility(task, job.check, activeRole(s, job.requester));
           const cached = this.validCheck(s, task, job.check);
@@ -2191,6 +2247,10 @@ export class Workflow {
     Object.assign(job, result, { finishedAt: Date.now() });
     const task = find(s.tasks, job.taskId);
     const independent = leadCheck(job.check);
+    if(!independent&&job.state==='passed'&&this.validCheck(s,task,job.check)) {
+      task.reworkEvidence=(task.reworkEvidence??[]).filter(checkId=>checkId!==job.check.id);
+      task.reworkEvidenceDetails=(task.reworkEvidenceDetails??[]).filter(item=>item.checkId!==job.check.id);
+    }
     if (independent && job.state === "passed" && task.state === "waiting_verification" &&
       task.verification.checks.filter(leadCheck).every((check) => this.validCheck(s, task, check))) {
       task.state = task.batchId ? "waiting_batch" : "ready";
@@ -2866,6 +2926,8 @@ context {}：当前项目目录、角色、职责和已保存的身份提示词�
 inspect {taskId,section?,offset?,limit?}：默认只回状态、验收条款、检查摘要和最近报告。完整票面显式 section:"full"；baseline.other、全量 checkJobs、reports、reviews、scheduleHistory、acceptance 显式按 section 分页，offset 非负、limit 为 1–200。默认上限190KB；返回 truncated、scanned、totalBytes 与 omitted 查询入口，完整证据保留本地。
 deliveryEvidence {taskId,candidate?,file?}：查当前候选可复用检查、命令、覆盖、断言标记及日志入口。file 打开交付清单中单个文件的实际差异；缺项交原责任人。索引不替代独立审查或主控短探针。
 diagnoseTask {taskId}：只读核对当前门槛。例：{"taskId":"原票ID"}。返回分类、具体原因及后续命令；HEAD 漂移时列出提交差异和阻塞路径。按原回合规则定向调用。
+governance {projectId?,limit?:50}：只读扫描本项目最近最多50个提交；未 summarize 的原票写集被提交时返回 commit、ticketKey、files、at，以及 released-work-committed / in-flight-work-committed。这是范围和生命周期风险审计，不根据 Git 作者名认定提交者身份。
+rework {taskId,reason,evidence?:[checkId]}：将证据待办清单回投原票 developerId。evidence 只允许冻结的非 independent/controller 检查；成员 inbox 逐项列出检查与上次分类、原因。指定检查必须在本次返工取得新有效回执才清空；其它仍有效的检查不强制重跑。diagnoseTask.nextAction 的 ownerRole/ownerId 指定实际责任人；ownerRole=developer 时主控使用 returnToOwner 回投，不能自行运行 check 或 shell。
 resumeTask {taskId,reason}：主控恢复会话异常的 assigned/rework/paused 原票。先在宿主恢复会话；成员仍运行、有排队输入、未知或未完作业时拒绝。保留原基线、报告、候选和检查历史，等待新空闲心跳后正常准入及重新投递。不能用该命令绕过归属或验收；原 operationId 重试只取同一回执。
 scopePreview {taskId?,writes,reads?,readOnly?,contextReads?,resources?}：主控在派发或调整前查看与活动票的冲突。reads 要包含实际检查输入；列出对方原票、冲突方向及路径或资源。
 inspectPlan {planId,document?}：读取原计划索引，指定 spec、tickets 或 attempts 查看冻结正文。
@@ -2881,8 +2943,8 @@ dispatchPlan {requirementId,sources:{spec,tickets,attempts},tickets:[{key,develo
 batches:[{key,tickets:[票编号],argv,inputs,resources,covers:[{ticket,acceptance:[AC编号]}],timeoutMs?,expectedOutput?}]：不同票确需同一次累计验证且候选能同时稳定时使用。成员票先过各自门槛，然后程序跑一次累计检查，通过才共同放行。retryBatch {batchId,reason} 对账后重跑。现场冲突可用 reviseBatch {batchId,reason,groups:[同样的批次定义]} 重新分组，保留全部原验收条款及历史。
 rebindCommittedWork {taskId,expectedBase,expectedHead,confirmPaths,confirmSourceAppends?,confirmRecordedBaseline?,reason}：仅主控。写集内提交默认阻断；用 diagnoseTask 核对，开发先停写交回。主控确认提交归属后可沿原票重绑。同分支快进、原写集可证明、冻结路径干净且无未完检查才允许。规划原文必须未变；若诊断证明仅在行边界追加 Markdown，可用诊断给出的 confirmSourceAppends 逐文件确认当前指纹。冻结时未提交、后来入库的记录型 Markdown 还须显式传 confirmRecordedBaseline；诊断会提供路径与指纹。确认只记审计，不改冻结规划或 AC。保留匹配的历史红证据，绿、完整检查及验收按新基线执行。不操作 Git 历史。
 yieldForSchedule {taskId,reason}：责任人停写并结束本票后台检查后交回调度。reviseSchedule {taskId,reason,writes?,reads?,resources?,ownedDirty?,after?:[{taskId,stage}],refreshBaseline?}：主控调整未开工或已交回的原票。调度变更留历史，发现实际写入和原票不一致时先停写。只有核实 Git 状态和已有改动归属后才 refreshBaseline。同分支安全前移且执行范围不变时，原检查仍按输入指纹和日志复核，不必仅因 HEAD 改变而重跑。
-supersede {taskId,supersededBy,reason}：仅本项目主控。旧票须为 paused/blocked、写集无已暂存/未暂存/未跟踪改动且无未完检查；active 票先由责任成员停写交回。改为 superseded 后释放全部读写与资源范围，保留冻结契约、历史证据、检查回执及替代审计；等待票的原依赖转向后继票且保留 verified/accepted 门槛，不把旧票当已验收。用 inspect 继续读取旧票。不会修改项目文件、提交、回滚或改写 Git 历史。
-releaseSchedule {taskId,reason}：主控释放 paused/blocked 收尾票的全部调度范围，保留旧范围快照和冻结证据；原票不再准入。对暂停的实施票 reviseSchedule {taskId,writes:[],reason} 等价。仍须旧写集干净且无未完检查。需要正式承接关系时用 supersede；不能用空写集绕过活动票的停写要求。
+supersede {taskId,supersededBy,reason}：仅本项目主控。旧票须为 paused/blocked 且无未完检查；active 票先由责任成员停写交回。改为 superseded 后释放全部读写与资源范围，保留冻结契约、历史证据、检查回执及替代审计；等待票的原依赖转向后继票且保留 verified/accepted 门槛，不把旧票当已验收。有原写集在途改动时返回 handoff 和带 ownedDirty 的 dispatchPlan nextAction；承接票仍须通过真实规划和归属门禁。用 inspect 继续读取旧票。不会修改项目文件、提交、回滚或改写 Git 历史。
+releaseSchedule {taskId,reason}：主控释放 paused/blocked 收尾票的全部调度范围，保留旧范围快照和冻结证据；原票不再准入。对暂停的实施票 reviseSchedule {taskId,writes:[],reason} 等价。仍须原责任停写且无未完检查；有在途改动时返回 handoff/ownedDirty 承接提案，不修改文件。abandonTask 同样返回承接提案。已释放票禁止 confirmCommit/rebindCommittedWork；不能用空写集绕过活动票的停写要求。
 后台检查以已授权原票冻结的 argv 为准。责任角色按 checkId 提交后由后台运行，已登记的累计检查达到条件时自动排队。检查在项目根目录运行；测试数据用 LINGFLOW_TEST_DATA_ROOT。
 技术依赖用 after.stage=verified。只有用户明确要求逐票试用确认后才能继续时才选 accepted；后续票已登记时，主控核对原约定后可用 reviseSchedule 调整原票依赖。
 check {taskId,checkId,async?}：责任开发提交红、绿或完整检查；主控提交独立验收或冻结的短探针。async:true 先返回作业号，归属和检查在后台完成。checkStatus {jobId} 查看结果；reused 时沿 reusedJobId 读取有效作业。票内 E2E 由开发承担，累计验证由程序后台跑。checkStatus {taskId} 默认看本票紧凑作业摘要，receipt含exitCode/failureOutputSeen/testCountSeen/environmentFailure/elapsedMs；完整作业传 detail:"full"，可配 limit/offset；checkEvidence {jobId} 读取日志。结果不明用原 operationId 对账。

@@ -1,7 +1,7 @@
 // Presence checks only. Contract, identity, ownership and value validation remain
 // in the original command implementation; identifiers are never normalized.
 export const requiredArguments = Object.freeze({
-  guide: [], list: [], context: [], inbox: [], messages: [], operation: ['id'], schema: ['command'],
+  guide: [], list: [], governance: [], context: [], inbox: [], messages: [], operation: ['id'], schema: ['command'],
   inspect: ['taskId'], diagnoseTask: ['taskId'], deliveryEvidence: ['taskId'], checkEvidence: ['jobId'],
   checkStatus: [], inspectPlan: ['planId'], scopePreview: ['writes'],
   previewPlan: ['requirementId', 'sources', 'tickets'], dispatchPlan: ['requirementId', 'sources', 'tickets'],

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import path from 'node:path';
 import { fixture } from "./helpers/evidence-fixture.mjs";
 
 const assertion = "require('node:assert/strict').equal(require('../implementation.cjs'), 'new');";
@@ -59,14 +60,11 @@ test("supersede releases paused scope immediately, preserves all evidence and ne
   assert.equal(f.call("Lead", "scopePreview", { taskId: nextId, writes: after.writes, reads: [] }).conflicts.some(peer => peer.taskId === f.taskId), false);
 });
 
-test("untracked writes and replacement cycles are rejected without changing task state", async t => {
+test("replacement cycles are rejected even when untracked work needs a handoff", async t => {
   const f = await fixture(t);
   pause(f);
   const nextId = successor(f).tasks[0].taskId;
   f.put(f.testFile, assertion);
-  assert.throws(() => f.call("Lead", "supersede", replacement(f, nextId)), /e2e\/new-case.cjs/);
-  f.git("add", f.testFile);
-  f.git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture resolves untracked write");
   const follower = f.call("Lead", "dispatch", { requirementId: f.store.read().requirements[0].id,
     developerId: f.roles.find(role => role.kind === "developer").id, title: "Cycle", description: "cycle fixture",
     risk: "low", readOnly: true, writes: [], reads: [], dependencies: [nextId] }).taskId;
@@ -78,7 +76,8 @@ test("untracked writes and replacement cycles are rejected without changing task
   assert.deepEqual(gitSnapshot(f), snapshot);
 });
 
-test("Git ignored files inside the old write scope cannot be silently released", async t => {
+test("Git ignored files inside the old write scope appear in an explicit handoff", async t => {
+  for (const command of ['supersede','releaseSchedule']) await t.test(command,async t=>{
   const f = await fixture(t);
   pause(f);
   const nextId = successor(f).tasks[0].taskId;
@@ -87,12 +86,13 @@ test("Git ignored files inside the old write scope cannot be silently released",
   f.git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture ignore rule");
   f.put(f.testFile, assertion);
   assert.equal(git(f, "status", "--porcelain"), "");
-  for (const command of ["supersede", "releaseSchedule"])
-    assert.throws(() => f.call("Lead", command, replacement(f, nextId)), /e2e\/new-case.cjs/);
-  assert.equal(f.store.read().tasks.find(task => task.id === f.taskId).state, "paused");
+  const result=f.call('Lead',command,replacement(f,nextId));
+  assert.deepEqual(result.handoff.ownedDirty,[f.testFile]);
+  assert.equal(readFileSync(path.join(f.root,f.testFile),'utf8'),assertion);
+  });
 });
 
-test("active tickets, dirty scope and unfinished checks cannot be superseded", async t => {
+test("active tickets and unfinished checks cannot be superseded; dirty work is transferred explicitly", async t => {
   const f = await fixture(t, "AssertionError", { existingTest: assertion });
   const nextId = successor(f).tasks[0].taskId;
   const args = replacement(f, nextId);
@@ -100,11 +100,6 @@ test("active tickets, dirty scope and unfinished checks cannot be superseded", a
   pause(f);
   assert.throws(() => f.call("Dev", "supersede", args), /主控/);
   f.put("implementation.cjs", "module.exports = 'dirty';");
-  assert.throws(() => f.call("Lead", "supersede", args), /未提交|改动|干净/);
-  f.git("add", "implementation.cjs");
-  assert.throws(() => f.call("Lead", "supersede", args), /未提交|改动|干净/);
-  f.put("implementation.cjs", "module.exports = 'old';");
-  f.git("add", "implementation.cjs");
   const before = f.store.read();
   f.store.change(state => state.checkJobs.push({ id: "unfinished", taskId: f.taskId, state: "uncertain" }));
   assert.throws(() => f.call("Lead", "supersede", args), /检查/);
@@ -128,7 +123,7 @@ test("controller can release a paused ticket through writes empty or releaseSche
     assert.equal(f.store.read().tasks.find(task => task.id === plan.tasks[0].taskId).state, "assigned");
     assert.deepEqual(gitSnapshot(f), snapshot);
     f.put("implementation.cjs", "module.exports = 'successor edit';");
-    assert.throws(() => f.call("Lead", "supersede", replacement(f, plan.tasks[0].taskId)), /未提交|改动|干净/);
+    assert.throws(() => f.call("Lead", "supersede", replacement(f, plan.tasks[0].taskId)), /已释放/);
   }
 });
 

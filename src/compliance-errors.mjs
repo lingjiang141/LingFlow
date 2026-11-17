@@ -1,6 +1,6 @@
 import { requiredArguments } from './command-arguments.mjs';
 
-const reads = new Set(['guide','list','context','inbox','messages','operation','schema','inspect','diagnoseTask','deliveryEvidence','checkEvidence','checkStatus','inspectPlan','scopePreview','previewPlan','cacheDiagnostics']);
+const reads = new Set(['guide','list','governance','context','inbox','messages','operation','schema','inspect','diagnoseTask','deliveryEvidence','checkEvidence','checkStatus','inspectPlan','scopePreview','previewPlan','cacheDiagnostics']);
 export const writeCommands = Object.keys(requiredArguments).filter(name => !reads.has(name));
 export function operationIdIssue(command, id, { force = false } = {}) {
   if (!force && !writeCommands.includes(command)) return null;
@@ -26,6 +26,9 @@ export function commandSignature(command) {
     preserves:['candidate','reports','checkJobs','dependencies','dependencyReceipts','state']});
   if(command==='cacheDiagnostics')Object.assign(signature,{window:'last24h',readOnly:true,
     fields:['deliveries','averagePromptBytes','contextFullCount','toolsReinstallCount','toolsVersion']});
+  if(command==='governance')Object.assign(signature,{readOnly:true,limit:{default:50,min:1,max:50},optional:['projectId','limit'],
+    kinds:['released-work-committed','in-flight-work-committed'],attribution:'仅按文件范围与票生命周期识别风险，不根据 Git 作者名断言提交者身份'});
+  if(command==='rework')Object.assign(signature,{optional:{evidence:'本票冻结的非 independent/controller 检查 id 数组'},effect:'回投原 developerId；逐条附上次回执分类与原因，通过有效检查后移除对应待办'});
   return signature;
 }
 export const summarizeExample = {

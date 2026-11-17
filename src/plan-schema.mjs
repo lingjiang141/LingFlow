@@ -36,6 +36,9 @@ export const planSchema = {
     testWrites: "must remain within writes; declaration permits test edits but does not require them",
   },
   independentTimeoutMs: 60000,
+  controllerBoundary: {stages:['independent','controller'],execution:'check only; no business edits, e2e, build, red/green/full/regression',
+    isolation:'argv and runner entry point must differ from developer checks; no full inputs+covers replica or child-process/shell wrapper',
+    evidenceRecovery:'rework {taskId,reason,evidence:[checkId]} to original developerId'},
   preparation: { requiredArtifacts: ["apps/web/dist"], preSteps: [{argv:["npm","run","build"],outputs:["apps/web/dist"],timeoutMs:120000}],
     rule: "显式冻结构建命令；outputs 不得覆盖 writes/inputs，inputs 须包含构建配置及源码；先构建后检查，总时限不扩大，回执记录日志与产物 hash" },
 };

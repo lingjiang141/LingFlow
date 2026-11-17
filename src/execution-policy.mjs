@@ -1,7 +1,7 @@
 export const defaultTimeouts = Object.freeze({ lightMs: 5000, evidenceMs: 60000, writeMs: 300000 });
 
 const light = new Set(["list", "messages", "inbox", "context", "guide", "schema", "operation", "scopePreview"]);
-const evidence = new Set(["inspect", "inspectPlan", "diagnoseTask", "deliveryEvidence", "rebindCommittedWork", "checkStatus", "checkEvidence", "previewPlan"]);
+const evidence = new Set(["inspect", "inspectPlan", "diagnoseTask", "deliveryEvidence", "rebindCommittedWork", "checkStatus", "checkEvidence", "previewPlan", "governance"]);
 
 export function executionPolicy(config = {}, projectId) {
   config ??= {};

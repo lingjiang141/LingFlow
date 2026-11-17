@@ -44,7 +44,8 @@ export async function fixture(t, marker = "AssertionError", options = {}) {
   for (const role of roles) call(role.name, "inbox");
   const requirement = call("Lead", "approve", { text: "New behavior and new test", source: "approved" });
   const checks = options.checks ?? ["red", "green", "full", ...(options.risk && options.risk !== "high" ? ["independent"] : [])].map(stage => ({ id: stage, stage,
-    argv: options.argv ?? ["node", testFile], inputs: [testFile, "implementation.cjs"], covers: ["AC1"],
+    argv: stage==='independent' ? ['node','-e',"require('node:assert/strict').equal(require('./implementation.cjs'),'new')"] : options.argv ?? ["node", testFile],
+    inputs: stage==='independent'?['implementation.cjs']:[testFile, "implementation.cjs"], covers: ["AC1"],
     ...(stage === "red" && { expectedOutput: marker }),
   }));
   const plan = call("Lead", "dispatchPlan", { requirementId: requirement.id, sources, tickets: [{

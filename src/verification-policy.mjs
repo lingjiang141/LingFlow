@@ -1,7 +1,8 @@
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 
-export const CONTROLLER_CHECK_BOUNDARY = "主控负责用户沟通、规划、派发与验收裁决。业务代码、红绿验证、全量自测和票内浏览器 E2E 交给开发；详细独立审查交给审查成员。主控核对最终候选与证据，只提交冻结的低负载收口探针；缺证沿原票交回责任人。共同累计检查由 LingFlow 后台执行。";
+export const CONTROLLER_CHECK_BOUNDARY = "主控负责用户沟通、规划、派发与验收裁决。主控不得写业务代码；不得执行 red / green / full / regression 检查，不得执行 e2e，不得执行 npm run build 等构建。主控唯一允许执行的是冻结的 independent / controller 短探针（最多 60000ms），且必须经 check 命令提交，不允许在主控 shell 里直接跑完再自称已验。详细独立审查交给审查成员，共同累计检查由 LingFlow 后台执行。怀疑证据时不得自行执行该检查；把票连同证据清单回投责任人（rework + evidence，或 diagnoseTask 给出的 ownerRole=developer 的命令）。主控只在 ownerRole=controller 的冻结探针上执行命令。";
+export const CONTROLLER_WAKE_BOUNDARY = '主控不得写业务代码或跑 red/green/full/regression/e2e/build；仅经 check 提交≤60000ms 的独立短探针（ownerRole=controller）。缺证用 rework+evidence 回投原开发者；完整红线见 guide {topic:"controller"}。';
 
 const developerStages = new Set(["red", "green", "full"]);
 export const browserStageRules = Object.fromEntries([
@@ -27,6 +28,26 @@ function smallProjectFile(root, file) {
     if (["ENOENT", "ENOTDIR"].includes(error.code)) return "";
     throw error;
   }
+}
+
+function probeSources(root, files, inline) {
+  const seen=new Set(),bodies=[];
+  const queue=files.map(file=>({file:path.resolve(root,file)}));
+  if(inline)queue.push({file:path.join(root,'.lingflow-inline-probe.cjs'),code:inline});
+  while(queue.length) {
+    const entry=queue.shift(),file=entry.file;
+    if(seen.has(file))continue;
+    seen.add(file);
+    if(seen.size>32)invalid('主控短探针依赖过多，无法核对低负载边界；请交责任开发 full/regression。');
+    const code=entry.code??smallProjectFile(root,file);
+    bodies.push(code);
+    for(const match of code.matchAll(/(?:require\s*\(\s*|\bfrom\s+|\bimport\s*)["'](\.[^"']+)["']/g)) {
+      const base=path.resolve(path.dirname(file),match[1]);
+      const dependency=[base,base+'.js',base+'.cjs',path.join(base,'index.js')].find(candidate=>smallProjectFile(root,candidate));
+      if(dependency)queue.push({file:dependency});
+    }
+  }
+  return bodies;
 }
 
 function browserSpec(root, file) {
@@ -141,6 +162,20 @@ export function assertCheckOwnership(root, check, cases) {
   if (browser) invalid(`检查 ${check.id}：浏览器 E2E 由责任开发执行。请移到开发检查并绑定 verification.browserE2E。`);
   if (check.stage !== "batch") {
     const [program, sub, script] = check.argv;
+    const executable=program.replaceAll('\\','/').split('/').at(-1).replace(/\.(?:exe|com)$/i,'').toLowerCase();
+    const [entry,code]=check.argv.slice(1).filter(arg=>!['--no-warnings','--trace-warnings','--enable-source-maps'].includes(arg));
+    if(executable==='node'&&check.argv.some(arg=>/^(?:--(?:import|require|loader|experimental-loader)(?:=|$)|-r$)/.test(arg)))
+      invalid('主控探针不得通过预加载包装开发检查；请回投责任开发 full/regression。');
+    const inline=executable==='node'?(['-e','--eval','-p','--print'].includes(entry)?code:entry?.startsWith('--eval=')?entry.slice(7):''):'';
+    const files=[...(executable==='node'&&entry&&!entry.startsWith('-')?[entry]:executable==='node'&&entry==='--test'&&code&&!code.startsWith('-')?[code]:[]),
+      ...scripts.flatMap(body=>[...body.matchAll(/\bnode\s+(?:--test\s+)?["']?([^\s"';&|]+\.[cm]?[jt]s)/g)].map(match=>match[1]))];
+    const bodies=[...check.argv,...scripts,...probeSources(root,files,inline)];
+    if (/^(?:bash|sh|cmd|powershell|pwsh)$/i.test(executable) ||
+        bodies.some(value=>/(?:child_process|\b(?:spawn(?:Sync)?|exec(?:File)?(?:Sync)?|fork|eval|Function|getBuiltinModule)\s*\(|\bimport\s*\()/i.test(value)))
+      invalid('主控探针不得通过包装脚本或子进程复用开发检查；该验证属于开发 full/regression，请回投原票而不是用收口探针重跑。');
+    if(bodies.some(value=>/(?:\b(?:tsc|vue-tsc|webpack|rollup|esbuild)(?:\b|\.\w+)|\b(?:vite|next)\s+build\b|\bnpm\s+(?:run|run-script)\s+build(?:\b|:))/i.test(value)) ||
+        program==='npm'&&['run','run-script'].includes(sub)&&/^build(?:$|:)/i.test(script??''))
+      invalid('主控短探针不得执行 npm run build 等构建；请交责任开发 full/regression。');
     if (program === "npm" && check.argv.slice(1).some((arg) => /^(?:-w|--workspace|--workspaces)(?:=|$)/.test(arg)))
       invalid("主控收口只允许冻结的低负载短探针，不允许 npm workspace 套件或构建；请交责任开发。");
     const command = check.argv.join(" ");

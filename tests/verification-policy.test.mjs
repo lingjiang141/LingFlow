@@ -78,6 +78,15 @@ test("browser regression accepts a frozen whole file but cannot select undeclare
   assert.deepEqual(freeze(root,[entry],[full,regression],[file]),[entry]);
 });
 
+test('controller probes cannot hide subprocesses in inline code, project wrappers or npm aliases',t=>{
+  const root=project(t);
+  writeFileSync(path.join(root,'wrapped.cjs'),"require('node:child_process').spawnSync('npm',['run','build']);");
+  writeFileSync(path.join(root,'indirect.cjs'),"require('./wrapped.cjs');");
+  writeFileSync(path.join(root,'package.json'),JSON.stringify({scripts:{probe:'node indirect.cjs'}}));
+  for(const argv of [['node','-e',"require('child_process').execSync('npm run build')"],['node','-e',"require('./indirect.cjs')"],['node','--no-warnings','wrapped.cjs'],['node','wrapped.cjs'],['node','indirect.cjs'],['npm','run','probe']])
+    assert.throws(()=>assertCheckOwnership(root,{id:'probe',stage:'controller',argv}),/主控探针不得|开发 full/);
+});
+
 test("equal browser argv with wrong covers reports covers, never an argv violation", (t) => {
   const root = project(t);
   const issues = [];
