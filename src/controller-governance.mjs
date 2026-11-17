@@ -23,6 +23,12 @@ export function releaseHandoff(state, task, git) {
   const writes=[...originalTaskWrites(task)];
   const ownedDirty=[...new Set(git.dirty.filter(file=>coversPath(writes,file)))].sort();
   if(!ownedDirty.length)return {};
+  return {handoff:{ticketKey:task.ticketKey,writes,ownedDirty,instruction:takeoverMessage+'；核对承接票的规划授权和冻结检查后，将 ownedDirty 原样交给开发成员，主控不得接手实现。'},
+    nextAction:successorAction(state,task,ownedDirty)};
+}
+
+export function successorAction(state,task,ownedDirty=[]) {
+  const writes=[...originalTaskWrites(task)];
   const members=state.roles.filter(role=>role.projectId===task.projectId&&role.kind==='developer'&&!role.archivedAt);
   const idle=members.find(role=>role.enabled&&role.state==='idle'&&role.pending===0&&role.jobs===0);
   const developer=idle??members.find(role=>role.id===task.developerId);
@@ -43,10 +49,9 @@ export function releaseHandoff(state, task, git) {
   // Frozen checks store an empty optional marker; public dispatch input uses
   // absence for that marker. Keep the skeleton valid through the real parser.
   for(const check of ticket.verification?.checks??[])if(!check.expectedOutput)delete check.expectedOutput;
-  return {handoff:{ticketKey:task.ticketKey,writes,ownedDirty,instruction:takeoverMessage+'；核对承接票的规划授权和冻结检查后，将 ownedDirty 原样交给开发成员，主控不得接手实现。'},
-    nextAction:{command:'dispatchPlan',ownerRole:'controller',ownerId:task.dispatchedBy,
+  return {command:'dispatchPlan',ownerRole:'controller',ownerId:task.dispatchedBy,
       args:{requirementId:task.requirementId,sources,tickets:[ticket]},
-      message:'先用相同 args 执行 previewPlan 核对新票与规划正文；sources 中有机读票号约束时须先补批准的承接票正文。空闲开发者不存在时保留原开发责任，正常准入等待空闲。'}};
+      message:'先用相同 args 执行 previewPlan 核对新票与规划正文；sources 中有机读票号约束时须先补批准的承接票正文。空闲开发者不存在时保留原开发责任，正常准入等待空闲。'};
 }
 
 function summarized(task) {

@@ -18,9 +18,10 @@ export function preparationContract(check, writes, commandArgs) {
 
 export async function prepareCheck(root, check, { env = process.env } = {}) {
   const started = Date.now(), steps = [];
+  try {
   for (const step of check.preSteps ?? []) {
     const remaining = Math.min(step.timeoutMs, check.timeoutMs - (Date.now() - started));
-    if (remaining <= 0) throw Error("构建前置超过检查总时限");
+    if (remaining <= 0) throw Object.assign(Error("构建前置超过检查总时限"),{timedOut:true});
     const [program, ...args] = step.argv;
     let executable = program === "node" ? process.execPath : program;
     if (program === "npm") {
@@ -29,22 +30,27 @@ export async function prepareCheck(root, check, { env = process.env } = {}) {
       if (!cli) throw Error("找不到 npm-cli.js");
       executable = process.execPath; args.unshift(cli);
     }
+    const stepStarted=Date.now();
     const result = await new Promise((resolve, reject) => {
       const child = spawn(executable, args, { cwd: root, env, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
       let output = "", timedOut = false;
       const timer = setTimeout(() => { timedOut = true; child.kill(); }, remaining);
       for (const stream of [child.stdout, child.stderr]) stream.on("data", chunk => { output += chunk.toString().slice(0, Math.max(0, 64000 - output.length)); });
       child.on("error", error => { clearTimeout(timer); reject(error); });
-      child.on("close", (exitCode, signal) => { clearTimeout(timer); resolve({ argv: step.argv, exitCode, signal, timedOut, output }); });
+      child.on("close", (exitCode, signal) => { clearTimeout(timer); resolve({ argv: step.argv, exitCode, signal, timedOut, output,elapsedMs:Date.now()-stepStarted }); });
     });
     steps.push(result);
-    if (result.exitCode !== 0 || result.signal || result.timedOut) throw Object.assign(Error("构建前置失败，不能作为红证据"), { preparation: { steps } });
+    if (result.exitCode !== 0 || result.signal || result.timedOut) throw Object.assign(Error("构建前置失败，不能作为红证据"), { timedOut:result.timedOut });
   }
   const artifacts = (check.requiredArtifacts ?? []).map(file => {
     if (!existsSync(path.resolve(root, file))) throw Object.assign(Error("缺少构建产物 " + file), { preparation: { steps } });
     return { file, hash: fingerprint(root, [file]) };
   });
   return { steps, artifacts, elapsedMs: Date.now() - started };
+  }catch(error){
+    const timedOut=Boolean(error.timedOut||steps.some(step=>step.timedOut));
+    throw Object.assign(error,{phase:'preparation',timedOut,preparation:{...error.preparation,steps,elapsedMs:Date.now()-started,timedOut}});
+  }
 }
 export function artifactsIntact(root, preparation) {
   try { return (preparation?.artifacts ?? []).every(({ file, hash }) => fingerprint(root, [file]) === hash); } catch { return false; }

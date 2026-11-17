@@ -55,6 +55,14 @@
 
 `governance {limit:50}` 为只读命令，无需 operationId。主控只可查看本项目，工作台可按 projectId 选择项目。最多扫描最近50个提交，返回每个项目的 `{commit,ticketKey,files,at,kind}` 记录。未曾 summarize 的票，提交触及其 writes 时记录 in-flight-work-committed；释放后提交则记录 released-work-committed。新释放审计保存当时 Git HEAD，避免同一秒内提交与释放的先后关系被时间戳误判。结果表示范围和流程风险，不能据 Git 作者名证明是主控或开发者实际提交。
 
+## uncertain 对账与构建前置超时（F27）
+
+`reconcileCheck {jobId,evidence}` 保留工作台路径，并允许本项目主控使用。实际确认旧检查进程已经退出且资源可复用后填写 evidence。结果变为 interrupted，原回执保留，主控调用额外记录 reconciledBy=controller、reconciledById、reconciledAt。开发者和跨项目主控无权对账；uncertain 不会因此被视为通过。对账后原开发者可 yieldForSchedule，再按正常停写与检查收口门槛释放范围。不会自动丢弃 uncertain 作业或跳过确认。
+
+构建前置失败也记录 preparation.elapsedMs、每步 elapsedMs 和 timedOut。前置步骤超时，或总超时时前置耗时达到总 timeoutMs 的80%，判为 preparation-timeout；回执不计红/绿证据。checkStatus {jobId} 与 diagnoseTask 的 nextAction 提供 dispatchPlan 承接提案，以及 before 数组中的对账、开发者交回和主控释放命令。建议预算依据实测下限及各步预算计算；超时步骤也须留余量，原票的冻结总时限和各步时限均不修改。主控探针不会突破60000ms。承接提案需核对规划与 ownedDirty，通过 previewPlan 后再执行派发。
+
+previewPlan 对有 preSteps 且总 timeoutMs<300000 的检查给出“构建前置可能占满预算”warning；该提示不拒绝计划、不自动加时。构建与检查仍共享原票总预算。后继票的新时限必须由新规划冻结，超过一小时上限时须拆分构建或复用可核验产物。
+
 上述命令只更新 LingFlow 状态和审计，不提交、回滚、修改项目文件或改写 Git 历史。写集尚有内容时保留现场，由主控先核对归属。累计验证批次的契约不会自动改写，涉及旧票的分组仍须主控沿原批次核对。
 
 ## 派发字段

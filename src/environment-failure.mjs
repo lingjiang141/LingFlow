@@ -1,4 +1,5 @@
 import { executionFacts, redEvidenceRequirement } from './evidence-facts.mjs';
+import { isPreparationTimeout } from './preparation-budget.mjs';
 export const environmentFailureHint = '责任开发成员先跑 npm run build 或修复本机依赖，不算票面红/绿证据；主控不得在本机执行该命令后自称已验';
 
 export function detectEnvironmentFailure(receipt = {}, output = '', startedAt = receipt?.startedAt, check) {
@@ -11,12 +12,13 @@ export function detectEnvironmentFailure(receipt = {}, output = '', startedAt = 
   const launchError = typeof receipt.launchError === 'string' && receipt.launchError.trim();
   // A successful quiet script is not a startup failure. Red's expected nonzero
   // exit still needs checking: an environment error must never count as red.
-  const failed = launchError || receipt.signal || receipt.timedOut ||
+  const failed = launchError || receipt.signal || receipt.timedOut || receipt.preparation?.timedOut ||
     Number.isInteger(receipt.exitCode) && receipt.exitCode !== 0;
   let code = null, reason = null;
   const hit = (value, description) => { code = value; reason = description; };
   if (failed) {
-    if (launchError) hit('launch-error', '检查进程或构建前置未能启动：' + launchError);
+    if (isPreparationTimeout(receipt,check)) hit('preparation-timeout', '构建前置耗尽检查预算；前置实测 '+(receipt.preparation?.elapsedMs??'未知')+'ms，冻结总预算 '+check?.timeoutMs+'ms；按构建实测耗时提高 timeoutMs 后重建承接票');
+    else if (launchError) hit('launch-error', '检查进程或构建前置未能启动：' + launchError);
     else if (receipt.timedOut) hit('check-timeout', '检查进程超时，需要核对原进程与资源后再重跑');
     else if (receipt.signal) hit('process-signal', '检查进程被信号终止：' + receipt.signal);
     else if (/Process from config\.webServer was not able to start/i.test(plain)) hit('webserver-start-failed', 'Playwright webServer 启动失败');
@@ -43,8 +45,8 @@ export function environmentRetry(job) {
 
 export function taskEnvironmentFailure(jobs) {
   const latest = new Map();
-  for (const job of jobs) if (!['queued', 'launching', 'uncertain'].includes(job.state)) latest.set((job.batchId ?? 'task') + ':' + job.check.id, job);
-  const failed = [...latest.values()].reverse().find(job => job.environmentFailure && job.classification === 'environment-failed');
+  for (const job of jobs) if (!['queued', 'launching', 'uncertain'].includes(job.state)||job.state==='uncertain'&&job.classification==='preparation-timeout') latest.set((job.batchId ?? 'task') + ':' + job.check.id, job);
+  const failed = [...latest.values()].reverse().find(job => job.environmentFailure && ['environment-failed','preparation-timeout'].includes(job.classification));
   return failed ? { environmentFailure: true, environmentFailureReason: failed.environmentFailureReason, reason: failed.reason,
     evidenceKind: failed.evidenceKind, matchedRule: failed.matchedRule, elapsedMs: failed.elapsedMs,
     redEvidenceRequirement: failed.redEvidenceRequirement, hint: failed.hint, membersCanRetry: failed.membersCanRetry, nextAction: failed.nextAction, environmentCheckId: failed.check.id }

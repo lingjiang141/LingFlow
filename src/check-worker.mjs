@@ -7,6 +7,7 @@ import { fingerprint } from "./files.mjs";
 import { prepareCheck } from "./check-preparation.mjs";
 import { detectEnvironmentFailure, environmentRetry } from "./environment-failure.mjs";
 import { checkEvidenceFacts } from './check-evidence.mjs';
+import { preparationTimeoutHint } from './preparation-budget.mjs';
 
 const directory = process.argv[2];
 const job = JSON.parse(
@@ -26,7 +27,9 @@ function saveResult(result, output = "") {
   result = { ...result, startedAt, finishedAt: Date.now() };
   result = { ...result, ...detectEnvironmentFailure(result, output, startedAt, job.check) };
   result = { ...result, ...checkEvidenceFacts(job.check,result,output) };
-  if (result.environmentFailure) Object.assign(result, { failureOutputSeen: false, classification: "environment-failed", ...environmentRetry(job) });
+  if (result.environmentFailure) Object.assign(result, { failureOutputSeen: false, classification: result.environmentFailureReason==='preparation-timeout'?'preparation-timeout':"environment-failed",
+    ...(result.environmentFailureReason==='preparation-timeout'?{hint:preparationTimeoutHint,membersCanRetry:false,
+      nextAction:{command:'checkStatus',args:{jobId:job.id},message:'读取重建承接票的完整 dispatchPlan 参数'}}:environmentRetry(job)) });
   writeFileSync(path.join(directory, "output.txt"), output, "utf8");
   const temporary = path.join(directory, "result.tmp");
   const outputHash = createHash("sha256").update(output, "utf8").digest("hex");
@@ -61,7 +64,7 @@ let preparation;
 try { preparation = await prepareCheck(job.root, job.check); }
 catch (error) {
   saveResult({ exitCode: null, failureOutputSeen: false, expectedOutputSeen: false, preparation: error.preparation,
-    preparationError: error.message, launchError: error.message }, error.message);
+    preparationError: error.message, launchError: error.message,phase:error.phase??'preparation',timedOut:Boolean(error.timedOut) }, error.message);
   process.exit(0);
 }
 if (!matchesInputs()) { saveResult({ stale: true, preparation }, "构建前置修改了冻结输入"); process.exit(0); }

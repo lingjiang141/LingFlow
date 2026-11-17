@@ -23,6 +23,7 @@ import { reconcileRoleDuplicates } from "./role-duplicates.mjs";
 import { assertStoppedTask, includeIgnoredScopeWrites, originalTaskWrites, releasedTaskScope, releaseStoppedScope, supersedeStoppedTask, abandonStoppedTask, supersessionHint, scopeConflictRemedy, taskScopeSchemas } from "./task-scope.mjs";
 import { releaseHandoff, projectGovernance, evidenceNextAction, takeoverMessage, releasedConfirmationMessage, developerEvidenceMessage } from './controller-governance.mjs';
 import { probeSeparationIssues } from './probe-separation.mjs';
+import { preparationRecovery,preparationActionView } from './check-recovery.mjs';
 import { commandTimeout, executionPolicy } from "./execution-policy.mjs";
 import {
   CONTROLLER_POLICY,
@@ -646,6 +647,10 @@ export class Workflow {
       if (args.jobId !== undefined) {
         const job = find(state.checkJobs, args.jobId);
         need(!role || job.projectId === role.projectId, "不可跨项目读取");
+        if(job.classification==='preparation-timeout') {
+          const nextAction=preparationActionView(job,find(state.tasks,job.taskId));
+          return {...job,nextAction,receipt:{...job.receipt,nextAction}};
+        }
         return job;
       }
       const task = find(state.tasks, args.taskId);
@@ -1394,14 +1399,15 @@ export class Workflow {
           break;
         }
         case "reconcileCheck": {
-          ui();
           const job = find(s.checkJobs, args.jobId);
+          need(!currentRole||currentRole.kind==='controller'&&currentRole.projectId===job.projectId,'仅本项目主控或用户工作台可对账检查；不可跨项目操作');
           need(job.state === "uncertain", "只有待对账的检查可人工收口");
           job.reconciliation = text(args.evidence, "已确认旧进程退出及资源安全的依据");
           job.state = "interrupted";
           job.finishedAt = Date.now();
+          if(currentRole)Object.assign(job,{reconciledBy:'controller',reconciledById:currentRole.id,reconciledAt:job.finishedAt});
           if (job.batchId) find(s.validationBatches, job.batchId).state = "interrupted";
-          result = { state: job.state };
+          result = { state: job.state,...(currentRole&&{jobId:job.id,reconciledBy:'controller',reconciledById:currentRole.id}) };
           break;
         }
         case "report": {
@@ -2036,7 +2042,7 @@ export class Workflow {
         const input = this.checkInput(root, task, check);
         const job = s.checkJobs.findLast((item) => item.taskId === task.id && item.check.id === check.id &&
           item.revision === task.revision && item.input === input);
-        const nextAction=evidenceNextAction(task,check,controller(s,task.projectId)?.id);
+        const nextAction=job?.classification==='preparation-timeout'?preparationActionView(job,task):evidenceNextAction(task,check,controller(s,task.projectId)?.id);
         return result(job?.classification ?? "evidence-missing", `检查 ${check.id}：${job?.error ?? "缺少有效回执"}`,
           nextAction, { message:nextAction.message,blocker: "checks-missing", checkId: check.id,
               ...(job&&{evidence:{command:activeCheck(job)?'checkStatus':'checkEvidence',args:activeCheck(job)?{taskId:task.id}:{jobId:job.id}}}),
@@ -2244,8 +2250,12 @@ export class Workflow {
   }
   closeCheck(s, job, result) {
     this.classifyCheck(job, result);
-    Object.assign(job, result, { finishedAt: Date.now() });
     const task = find(s.tasks, job.taskId);
+    if(result.environmentFailureReason==='preparation-timeout'&&['failed','uncertain'].includes(result.state)) {
+      Object.assign(result,preparationRecovery(s,task,job,result.receipt??{}));
+      if(result.receipt)Object.assign(result.receipt,{classification:result.classification,hint:result.hint,membersCanRetry:false,nextAction:result.nextAction});
+    }
+    Object.assign(job, result, { finishedAt: Date.now() });
     const independent = leadCheck(job.check);
     if(!independent&&job.state==='passed'&&this.validCheck(s,task,job.check)) {
       task.reworkEvidence=(task.reworkEvidence??[]).filter(checkId=>checkId!==job.check.id);
@@ -2928,6 +2938,7 @@ deliveryEvidence {taskId,candidate?,file?}：查当前候选可复用检查、�
 diagnoseTask {taskId}：只读核对当前门槛。例：{"taskId":"原票ID"}。返回分类、具体原因及后续命令；HEAD 漂移时列出提交差异和阻塞路径。按原回合规则定向调用。
 governance {projectId?,limit?:50}：只读扫描本项目最近最多50个提交；未 summarize 的原票写集被提交时返回 commit、ticketKey、files、at，以及 released-work-committed / in-flight-work-committed。这是范围和生命周期风险审计，不根据 Git 作者名认定提交者身份。
 rework {taskId,reason,evidence?:[checkId]}：将证据待办清单回投原票 developerId。evidence 只允许冻结的非 independent/controller 检查；成员 inbox 逐项列出检查与上次分类、原因。指定检查必须在本次返工取得新有效回执才清空；其它仍有效的检查不强制重跑。diagnoseTask.nextAction 的 ownerRole/ownerId 指定实际责任人；ownerRole=developer 时主控使用 returnToOwner 回投，不能自行运行 check 或 shell。
+reconcileCheck {jobId,evidence}：用户工作台或本项目主控可对账 state=uncertain 的作业。evidence 必须写明已确认旧作业退出、资源可安全复用的实际依据；标记 interrupted，保留旧回执，不当作 passed。主控回执带 reconciledBy=controller 和 reconciledById。之后责任开发成员可 yieldForSchedule，再沿正常范围释放或返工路径处理；无需主控接手开发。
 resumeTask {taskId,reason}：主控恢复会话异常的 assigned/rework/paused 原票。先在宿主恢复会话；成员仍运行、有排队输入、未知或未完作业时拒绝。保留原基线、报告、候选和检查历史，等待新空闲心跳后正常准入及重新投递。不能用该命令绕过归属或验收；原 operationId 重试只取同一回执。
 scopePreview {taskId?,writes,reads?,readOnly?,contextReads?,resources?}：主控在派发或调整前查看与活动票的冲突。reads 要包含实际检查输入；列出对方原票、冲突方向及路径或资源。
 inspectPlan {planId,document?}：读取原计划索引，指定 spec、tickets 或 attempts 查看冻结正文。
@@ -2949,6 +2960,7 @@ releaseSchedule {taskId,reason}：主控释放 paused/blocked 收尾票的全部
 技术依赖用 after.stage=verified。只有用户明确要求逐票试用确认后才能继续时才选 accepted；后续票已登记时，主控核对原约定后可用 reviseSchedule 调整原票依赖。
 check {taskId,checkId,async?}：责任开发提交红、绿或完整检查；主控提交独立验收或冻结的短探针。async:true 先返回作业号，归属和检查在后台完成。checkStatus {jobId} 查看结果；reused 时沿 reusedJobId 读取有效作业。票内 E2E 由开发承担，累计验证由程序后台跑。checkStatus {taskId} 默认看本票紧凑作业摘要，receipt含exitCode/failureOutputSeen/testCountSeen/environmentFailure/elapsedMs；完整作业传 detail:"full"，可配 limit/offset；checkEvidence {jobId} 读取日志。结果不明用原 operationId 对账。
 冻结检查可声明 requiredArtifacts:["apps/web/dist"] 和 preSteps:[{argv:["npm","run","build"],outputs:["apps/web/dist"],timeoutMs:120000}]。明确构建配置与源码 inputs，outputs 不得覆盖 writes/inputs；主控探针不做构建。缺产物明确报 evidence-missing，前置失败不算红，构建与检查共享总时限，回执保留步骤日志及产物 hash。
+preSteps 总预算预检：有 preSteps 且 timeoutMs<300000 时 warning 提醒“构建前置可能占满预算”；按构建实测下限预留保守总预算。前置步骤超时，或总超时且 preparation.elapsedMs>=timeoutMs*0.8 时，分类为 preparation-timeout。nextAction 给出带新预算的 dispatchPlan 承接提案和 before 步骤（主控对账、原开发停写交回、主控释放范围）。提案只修改新票参数，不能改写原票冻结 checks；实际调用前须补真实对账依据、规划并 previewPlan。主控探针仍限60000ms。
 report {taskId,summary,dimensions,outcome?,blocker?,request?,artifacts?,openItems?:[{text,blocking,trigger?,impact?,evidence?}]}：交付受阻时用 outcome=blocked，summary 写已完成工作与自测，blocker 写具体原因和被拒回执（如有），request 写需主控做的事。程序保存成员申报与当前诊断，但不受理候选、不放行下游；修复后沿原票另用新操作 ID 正式交付。成功交付可登记非阻塞待取舍项。实施票由程序收集检查回执和当前候选的写入清单。dimensions 的 requirements、implementation、system 各填 {state,evidence,checkIds:[检查编号]}。pass 必须引用同票有效且通过的非 red 检查，并解释它如何支持结论。问题或未验证用 issues/unverified。新只读票提供 dimensions（如某维度无法验证，注明 unverified 和原因）及 checks:[{command,exitCode:0,evidence}]，无需程序 checkIds。无冻结契约的旧票保留原报告，不补造三维或原生证据。
 review {taskId,candidate,verdict:"pass|changes",findings,dimensions,testReview?,classification?,request?,artifacts?,openItems?:[{text,blocking,trigger?,impact?,evidence?}]}：仅被派审成员。通过时引用同候选程序证据。交付 manifest.testChanges 非空时，testReview 说明为何既有测试改动没有降低覆盖，或用 changes 报出反例。changes 可标 contract-invalid（契约需对账）、evidence-missing（证据待补）、quality-failed（有可复现的质量反例）；不确定时用 evidence-missing。report/review 均确认 state=stored。
 message {roleId?,text,replyTo?}：监管发新消息给本项目通知负责人；主控必须用 replyTo 引用收到的监管消息；追问沿原消息。inbox 回投新消息，messages {messageId?} 查询本人频道或指定原消息。stored 仅表示已入库。

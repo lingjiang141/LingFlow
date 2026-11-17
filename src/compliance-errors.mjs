@@ -29,6 +29,8 @@ export function commandSignature(command) {
   if(command==='governance')Object.assign(signature,{readOnly:true,limit:{default:50,min:1,max:50},optional:['projectId','limit'],
     kinds:['released-work-committed','in-flight-work-committed'],attribution:'仅按文件范围与票生命周期识别风险，不根据 Git 作者名断言提交者身份'});
   if(command==='rework')Object.assign(signature,{optional:{evidence:'本票冻结的非 independent/controller 检查 id 数组'},effect:'回投原 developerId；逐条附上次回执分类与原因，通过有效检查后移除对应待办'});
+  if(command==='reconcileCheck')Object.assign(signature,{roles:['ui','controller'],preconditions:['作业 state=uncertain','主控只能对账本项目','evidence 说明旧作业已退出且资源可安全复用的实际依据'],
+    effect:'标记 interrupted，保留旧回执和证据；controller 路径记录 reconciledBy/reconciledById，不将 uncertain 转为 passed，也不修改冻结 checks'});
   return signature;
 }
 export const summarizeExample = {

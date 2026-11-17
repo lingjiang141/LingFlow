@@ -197,6 +197,10 @@ export function readVerification(input, { root, writes, risk, warnings = [], pre
     const failureOutput = check?.failureOutput===undefined ? undefined :
       attempt(at+".failureOutput","AssertionError","填写可定位的断言失败标记",()=>note(check.failureOutput,"断言失败标记"));
     const preparation = attempt(at+".preSteps", {preSteps:[{argv:["npm","run","build"],outputs:["apps/web/dist"]}]}, "声明构建命令、独立产物路径和实际 inputs", () => preparationContract({ ...check, inputs, timeoutMs }, writes, commandArgs), {});
+    if(preparation.preSteps?.length&&timeoutMs<300000)warnings.push({path:prefix+at+'.timeoutMs',
+      message:'构建前置可能占满预算：preSteps 与实际检查共享 '+timeoutMs+'ms 总时限',
+      timeoutMs,preStepBudgetMs:preparation.preSteps.reduce((sum,step)=>sum+step.timeoutMs,0),
+      remedy:'按构建实测下限为新票预留至少三倍前置预算，并给每一步填写合理 timeoutMs；本提示不修改冻结检查。'});
     if (controller && preparation.preSteps?.length) add(at+".preSteps", "主控短探针不能执行构建前置", [], "将构建交开发检查");
     if (issues.length===before) checks.push({ id, stage, argv, covers, inputs, timeoutMs, expectedExit, expectedOutput, ...(failureOutput&&{failureOutput}), ...(preparation.requiredArtifacts?.length && preparation) });
   }
