@@ -23,7 +23,14 @@ export function petProgress(snapshot, selection = {}) {
       state: task.state, label: retired && task.state !== "superseded" ? "范围已释放" : labels[task.state] ?? task.state,
       assignee: role?.name ?? "未分配", waitReason: excerpt(task.waitReason ?? "", 180), retired });
   }
-  for (const group of groups) group.tickets.sort((a, b) => a.key.localeCompare(b.key, "zh-CN", { numeric: true }));
+  for (const group of groups) {
+    const priority = ticket => {
+      if (ticket.state === "abandoned" || ticket.retired) return 2;
+      if (group.id === "active" && ticket.state === "assigned" || group.id === "closed" && ticket.state === "trial") return 0;
+      return 1;
+    };
+    group.tickets.sort((a, b) => priority(a) - priority(b) || a.key.localeCompare(b.key, "zh-CN", { numeric: true }));
+  }
   return { projects, project, specs: board.specs.map(({ key, file, digest }) => ({ key, file, digest })),
     cycles: board.cycles.map(({ key, file, versions, tasks }) => ({ key, file, versionCount: versions.length, ticketCount: tasks.length })),
     scopes: specChoices(board), selectionKey: board.selectionKey,

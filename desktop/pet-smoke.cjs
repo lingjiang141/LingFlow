@@ -54,6 +54,10 @@ app.whenReady().then(async () => {
   await capture("overview");
   assert.equal(await evaluate("document.querySelectorAll('.ticket').length"), states.length);
   assert.equal(await evaluate("document.getElementById('progress-label').textContent"), "3 / 11 已收口 · 1 已验收");
+  assert.equal(await evaluate("document.querySelector('#active .ticket').dataset.id"), "ticket-4");
+  assert.equal(await evaluate("document.querySelector('#closed .ticket').dataset.id"), "ticket-2");
+  assert.equal(await evaluate("document.querySelector('#closed .ticket:last-child').dataset.id"), "ticket-3");
+  result.priorityOrdering = true;
   assert.match(await evaluate("document.getElementById('spec').selectedOptions[0].textContent"), /本轮全部票/);
   const versionKey = JSON.stringify(["R35 · AI 出题工作台.md", "revision-two"]);
   await evaluate(`document.getElementById('spec').value = ${JSON.stringify(versionKey)}; document.getElementById('spec').dispatchEvent(new Event('change'))`);

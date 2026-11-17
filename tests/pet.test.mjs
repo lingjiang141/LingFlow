@@ -40,6 +40,21 @@ test("each idle action completes exactly two loops; viewing loops coding continu
   }
 });
 
+test("pet puts live development and trials first, then ticket numbers, with abandoned and historical tickets last", () => {
+  const entries = [[2,'abandoned'],[12,'assigned'],[3,'reviewing'],[10,'assigned'],[4,'rework'],
+    [22,'trial'],[21,'trial'],[1,'accepted'],[5,'ready'],[0,'superseded'],[6,'abandoned'],[8,'queued'],[7,'queued']];
+  const tasks=entries.map(([number,state])=>({id:String(number),ticketKey:'R36-'+number,projectId:'p',title:state,state,
+    ...(number===6&&{releasedScope:{reason:'retired'}}),sources:{spec:{file:'spec.md',digest:'v1'}}}));
+  const snapshot={projects:[{id:'p',name:'Project'}],tasks};
+  const view=petProgress(snapshot,{projectId:'p'});
+  const ids=group=>view.groups.find(g=>g.id===group).tickets.map(t=>Number(t.id));
+  assert.deepEqual(ids('active'),[10,12,3,4,2]);
+  assert.deepEqual(ids('closed'),[21,22,1,5,0,6]);
+  assert.deepEqual(ids('waiting'),[7,8]);
+  assert.equal(view.total,11);assert.equal(view.completed,4);assert.equal(view.accepted,1);
+  assert.deepEqual(tasks.map(t=>Number(t.id)),entries.map(([number])=>number),'Sorting does not reorder stored tasks');
+});
+
 test("pet defaults to the whole Spec cycle and can switch back to one frozen revision", () => {
   const tasks=Array.from({length:8},(_,i)=>({id:String(i),projectId:'p',ticketKey:'R36-'+(i+1),
     state:i<5?'accepted':'assigned',title:'Ticket '+i,sources:{spec:{file:'round/spec.md',digest:i<5?'v1':i<7?'v2':'v3'}}}));
