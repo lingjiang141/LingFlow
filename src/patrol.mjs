@@ -1,5 +1,5 @@
 import { sessionIssue } from "./recovery.mjs";
-import { consumeWake } from './wake-state.mjs';
+import { activeWake, consumeWake } from './wake-state.mjs';
 const FRESH_MS = 15000;
 const IDLE_GRACE_MS = 90000;
 const RUNNING_GRACE_MS = 10 * 60 * 1000;
@@ -47,6 +47,7 @@ export function recordObservation(role, session, now) {
     at: now,
     activityAt: time(input.activityAt),
     turn,
+    compacting: input.compacting === true,
   };
 }
 
@@ -182,8 +183,11 @@ export function inspectRole({ s, role, project, lead, now, live, notify }) {
     return alert("retry-limit", "已达到自动续接上限，需核对原会话");
   if (!live || now - seen.at > 6000) return;
   const wake = s.wakes.find(
-    (item) => item.roleId === role.id && item.state !== "consumed",
+    (item) => item.roleId === role.id && activeWake(item),
   );
+  if (!wake && s.wakes.some(item => item.roleId === role.id && item.state === "failed" && !item.consumedAt &&
+      s.notices.some(notice => item.noticeIds.includes(notice.id) && !notice.readAt && notice.taskId === (task?.id ?? null))))
+    return set("delivery-failed", "原唤醒达到自动重投上限，等待原会话读取 inbox 或明确续接");
   if (wake?.state === "pending") {
     if (role.deliveryIssue)
       alert("delivery", "DSH 投递结果不明，需要在原会话对账");

@@ -58,7 +58,7 @@ assert.equal(result.renameOnly, true);
 assert.equal(result.savedPrompt, "检查交互边界");
 assert.equal(result.customRoleLabel, "质量工程师");
 assert.match(result.deliveryControls.enablePending, /正在登记续接/);
-assert.match(result.deliveryControls.resumeOffline, /等原会话上线/);
+assert.match(result.deliveryControls.silentResume, /本轮无责任，无需核对或回报/);
 assert.match(result.deliveryControls.pausePending, /正在暂停新投递/);
 assert.match(result.deliveryControls.paused, /已保留原任务/);
 assert.match(result.body, /质量工程师 · 按审查运行/);

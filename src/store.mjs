@@ -6,6 +6,7 @@ import { dirname } from "node:path";
 // One synchronous transaction owns domain state, outbox and operation receipts.
 export class Store {
   constructor(file, { readOnly = false } = {}) {
+    this.directory = dirname(file);
     if (readOnly) {
       this.db = new DatabaseSync(file, { readOnly: true });
       return;
@@ -54,12 +55,19 @@ export class Store {
       .prepare("INSERT INTO events(at,kind,data) VALUES(?,?,?)")
       .run(Date.now(), kind, JSON.stringify(data));
   }
+  wakeLossCounts() {
+    return new Map(this.db.prepare(`SELECT json_extract(data,'$.wakeId') AS id, count(*) AS losses
+      FROM events WHERE kind='wake.delivery_lost' GROUP BY id`).all().map(({ id, losses }) => [id, losses]));
+  }
   taskEvents(taskId, {offset=0,limit=3}={}) {
     if (!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>200) throw Error('events offset 须非负，limit 须为1–200');
     const join = `FROM events e LEFT JOIN operations o ON o.scope=json_extract(e.data,'$.scope') AND o.id=json_extract(e.data,'$.operationId')
       WHERE json_extract(e.data,'$.taskId')=? OR json_extract(o.input,'$.args.taskId')=?`;
     const total=this.db.prepare('SELECT count(*) AS total '+join).get(taskId,taskId).total;
-    const items=this.db.prepare('SELECT e.seq,e.at,e.kind,json_extract(e.data,\'$.operationId\') AS operationId '+join+' ORDER BY e.seq DESC LIMIT ? OFFSET ?').all(taskId,taskId,limit,offset);
+    const items=this.db.prepare(`SELECT e.seq,e.at,e.kind,json_extract(e.data,'$.operationId') AS operationId,
+      CASE WHEN e.kind IN ('input.drop-requested','input.drop-completed','input.drop-obsolete') THEN e.data END AS dropDetails
+      ${join} ORDER BY e.seq DESC LIMIT ? OFFSET ?`).all(taskId,taskId,limit,offset)
+      .map(({dropDetails,...item})=>dropDetails ? {...item,inputDrop:JSON.parse(dropDetails)} : item);
     return {taskId,section:'events',items,offset,limit,total,scanned:total,truncated:offset+items.length<total,
       nextOffset:offset+items.length<total?offset+items.length:null};
   }

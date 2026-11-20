@@ -1,5 +1,6 @@
 export function promptMetrics(text, contextFull, toolsVersion = null) {
-  const boundary = text.indexOf('当前事项\n');
+  const digest = text.lastIndexOf('\n\n当前状态\n当前状态（自动生成，勿手工核对以下事实）');
+  const boundary = digest < 0 ? text.indexOf('当前事项\n') : digest + 2;
   const stable = boundary < 0 ? text : text.slice(0, boundary);
   return { promptBytes: Buffer.byteLength(text), stableBytes: Buffer.byteLength(stable), contextFull,
     toolsVersion };

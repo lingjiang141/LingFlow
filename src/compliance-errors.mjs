@@ -1,6 +1,6 @@
 import { requiredArguments } from './command-arguments.mjs';
 
-const reads = new Set(['guide','list','governance','context','inbox','messages','operation','schema','inspect','diagnoseTask','deliveryEvidence','checkEvidence','checkStatus','inspectPlan','scopePreview','previewPlan','cacheDiagnostics']);
+const reads = new Set(['guide','list','governance','context','inbox','messages','operation','schema','inspect','diagnoseTask','describeDrift','deliveryEvidence','checkEvidence','checkStatus','inspectPlan','scopePreview','previewPlan','cacheDiagnostics','buildCache']);
 export const writeCommands = Object.keys(requiredArguments).filter(name => !reads.has(name));
 export function operationIdIssue(command, id, { force = false } = {}) {
   if (!force && !writeCommands.includes(command)) return null;
@@ -19,9 +19,23 @@ export function commandSignature(command) {
     requiredWhen: '原需主控核对的报告 manifest.testChanges 非空' } }, example: summarizeExample });
   if (command === 'inspect') Object.assign(signature, { default: 'summary', maxBytes: 190000,
     sections: ['full','acceptance','baseline.other','checkJobs','reports','reviews','scheduleHistory','events'], paging: { offset: 0, limit: '1–200' } });
+  if (command === 'diagnoseTask') signature.optional = { supersedeConflict: '主控确认无法顺序执行时填写冲突原票 ID' };
+  if (command === 'describeDrift') signature.optional = { partitionPeerTaskId: '主控只读核对已验收票的暂存 hunk，填写已停写的另一张票 ID' };
   if (command === 'checkStatus') Object.assign(signature, { default: 'compact', detail: ['compact','full'], paging: { offset: 0, limit: '1–200' },
     receiptFields: ['exitCode','failureOutputSeen','testCountSeen','environmentFailure','elapsedMs'] });
+  if (command === "unblock") Object.assign(signature, { role: "controller",
+    outcomes: ["applied", "confirmation-required", "blocked"], fields: ["chosen", "result", "remainingBlockers", "nextAction"] });
+  if (command === "accept") Object.assign(signature, { roles: ["ui", "controller"], state: "trial",
+    evidence: "当前候选的实际用户试用结论", records: ["acceptedBy", "candidate", "at"] });
+  if (command === "question") signature.optional = { blocking: "布尔值，默认 false，作用域由提问者的角色决定" };
+  if (command === "answer") signature.optional = { resume: "布尔值，默认 true，安全时恢复暂停中的原开发责任" };
+  if (command === "message") signature.optional = { roleId: "主控直达的同项目角色", replyTo: "本人收到且可核实发件人的消息或通知 ID" };
+  if (command === "dropPendingInput") Object.assign(signature, { role: "controller",
+    fields: { expectedQueueFingerprint: "复制 redeliver.dropAction 中已核对误投的队列指纹" },
+    receipt: "先回 pending，宿主对账后从 list.roles[].lastInputDrop 查取消结果及输入 ID" });
+  if (command === "report") signature.optional = { specVersion: "派发或当前 spec 版本，例如 v2" };
   if(command==='confirmCommit')Object.assign(signature,{role:'controller',gitWrites:false,
+    optional:{partition:{peerTaskId:'已停写的另一张票 ID',proof:'describeDrift 的分区证明'}},
     preconditions:['已交付候选','提交与候选输入指纹完全等价','原检查仍有效','无未完成检查','冻结分支与祖先关系有效','paths 精确匹配提交重叠范围'],
     preserves:['candidate','reports','checkJobs','dependencies','dependencyReceipts','state']});
   if(command==='cacheDiagnostics')Object.assign(signature,{window:'last24h',readOnly:true,

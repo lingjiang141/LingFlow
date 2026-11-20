@@ -13,7 +13,7 @@ export const planSchema = {
     key: "R35-01", developerId: "assigned developer ID",
     title: "from-ticket or explicit title", description: "from-ticket or explicit instructions",
     brief: "optional objective", boundaries: "optional constraints", stopConditions: "optional stop conditions",
-    risk: "low | medium | high", riskReason: "optional reason", readOnly: false,
+    risk: "low | medium | high", riskReason: "optional reason", readOnly: false, developerChecks: false,
     writes: "from-ticket | string[]", reads: "from-ticket | string[]", contextReads: [],
     resources: [], ownedDirty: [], after: [{ ticket: "R35-00", stage: "verified | accepted" }],
     verification: {
@@ -24,6 +24,13 @@ export const planSchema = {
     },
   }],
   optionalTicketRootAlias: "browserE2E -> verification.browserE2E",
+  developerChecks: "lingflow-contract 可声明 developerChecks:true。派发冻结 AC、testWrites、读写、资源和适用主控探针；责任开发在原实现未变时用 registerChecks 冻结真实检查。",
+  materialize: { command: "schema", args: { command: "dispatchPlan", requirementId: "approved requirement ID",
+    spec: "spec.md", ticketsDir: "issues", attempts: "planned-attempts.md" },
+    oneOf: ["ticketsDir（本轮新票目录）", "tickets（本轮具体票面路径数组）"],
+    optional: ["developerIds（按票号指定成员）"], result: "state=valid 时原样提交 args；票面 checks 由服务读取，不必在参数中重复" },
+  ticketChecks: { fence: "lingflow-checks", fields: ["ticket", "checks", "browserE2E"],
+    precedence: "显式 verification 优先；其余从票面契约、AC 正文与检查围栏读取，仍执行完整校验" },
   batches: [{ key: "release", tickets: ["R35-01","R35-02"], argv: ["node","verify.cjs","batch"],
     inputs: ["verify.cjs"], covers: [{ ticket: "R35-01", acceptance: ["AC-1"] },{ ticket: "R35-02", acceptance: ["AC-1"] }] }],
   stages: ["red", "green", "full", "regression", "independent", "controller"],
@@ -44,8 +51,9 @@ export const planSchema = {
     rule: "显式冻结构建命令；outputs 不得覆盖 writes/inputs，inputs 须包含构建配置及源码；先构建后检查，总时限不扩大，回执记录日志与产物 hash" },
 };
 
-export function violation(path, message, expected, remedy) {
-  return { path, message, expected, remedy };
+export function violation(path, message, expected, remedy, replacement) {
+  return { path, message, expected, remedy,
+    repair: replacement ?? { path, value: null, requiresInput: true } };
 }
 
 export function invalidPlan(violations, warnings = []) {

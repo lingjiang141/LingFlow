@@ -1,6 +1,7 @@
 import { specBoard, specChoices } from "./spec-board.js";
 import { excerpt, handoffLines, handoffRecord } from "./handoff-card.js";
 import { formatQualitySummary, noticeQualitySummary, qualityDimensions, qualityStateLabel } from "./quality-summary.js";
+import { roleDeliveryPresentation } from "./role-delivery.js";
 
 // uiToken 只在首次加载时出现在 hash 里；抹掉 hash 前先存进 sessionStorage，
 // 这样窗口内刷新（F5 / 比例变化后重载）仍然能通过服务端鉴权。
@@ -60,6 +61,7 @@ const riskLabels = { low: "低风险", medium: "中风险", high: "高风险" };
 const specSelection = new Map();
 const roleActions = new Map();
 const resumeLabels = {
+  silent: "角色已开启 · 本轮无责任，无需核对或回报",
   offline: "续接已登记 · 等原会话上线", "waiting-idle": "续接已登记 · 等原会话空闲且没有排队输入",
   pending: "续接已登记 · 待送达", delivered: "续接提示已送达 · 等成员读取",
   read: "成员已读取续接提示", "delivery-issue": "续接送达待对账 · 见上方说明",
@@ -467,6 +469,8 @@ function detail(task) {
   const requirement = state.requirements.find(
     (r) => r.id === task.requirementId,
   );
+  const timing = task.waitTimings;
+  const seconds = ms => (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + " 秒";
   const content = [
     `任务：${task.id}`,
     `状态：${taskStatus(task)} / 风险：${riskLabels[task.risk] ?? "未标记风险"}`,
@@ -488,12 +492,15 @@ function detail(task) {
     task.ticketKey && `规划票编号：${task.ticketKey}`,
     requirement?.source && `用户确认依据：${requirement.source}`,
     task.waitReason && `等待：${task.waitReason}`,
+    timing && (timing.trackedSince || timing.checkQueueMs > 0) &&
+      `分段等待：前置 ${timing.trackedSince ? seconds(timing.dependencyMs) : "—"} · 资源／范围 ${timing.trackedSince ? seconds(timing.resourceMs) : "—"} · 成员 ${timing.trackedSince ? seconds(timing.memberMs) : "—"} · 检查排队 ${seconds(timing.checkQueueMs)}`,
+    task.developerChecksPending && "责任开发待登记检查配方",
     task.blockedBy?.map(blocker => blocker.detail ?? blocker.code).join("；"),
     !task.readOnly && !task.verification && "旧票缺少冻结契约，历史仍可查看；剩余工作由主控用正式计划登记后继票。",
     task.progress && `进度：${task.progress}`,
     task.reworkReason && `返工原因：${task.reworkReason}`,
     task.trialInstructions && `试用步骤：${task.trialInstructions}`,
-    task.acceptance && `验收：${task.acceptance}`,
+    task.acceptance && `验收：${task.acceptance.evidence ?? task.acceptance}`,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -656,16 +663,9 @@ function render() {
             "muted",
           ),
         );
-        card.append(
-          node(
-            "p",
-            !r.sessionId
-              ? "等待会话绑定"
-              : `${r.enabled ? "已开启" : "新投递已暂停"} · ${r.connected ? (r.state === "idle" ? "空闲" : r.state === "running" ? "执行中" : r.state) : "离线"}\n待输入 ${r.pending ?? "—"}`,
-          ),
-        );
-        const deliveryIssue = r.deliveryDiagnostic?.detail ?? r.deliveryIssue;
-        if (deliveryIssue) card.append(node("p", deliveryIssue));
+        const delivery = roleDeliveryPresentation(r);
+        card.append(node("p", delivery.status));
+        if (delivery.issue) card.append(node("p", delivery.issue));
         if (r.patrolStatus) card.append(node("p", "巡检：" + r.patrolStatus.label, "muted"));
         const activity = roleActions.get(r.id);
         const feedback = activity?.message ?? (r.enabled ? resumeLabels[r.resumeStatus] : r.sessionId ? "已保留原任务；不会终止正在运行的会话。" : null);
@@ -679,6 +679,15 @@ function render() {
         b.disabled = !r.sessionId || Boolean(activity?.pending);
         const actions = node("div", undefined, "role-actions");
         actions.append(b);
+        if (delivery.rearm) {
+          const rearm = button("恢复未读投递", async () => {
+            const result = await call(delivery.rearm.command, delivery.rearm.args);
+            if (result.state === "blocked") throw Error(result.detail);
+            await refresh();
+          });
+          rearm.disabled = !r.connected || Boolean(activity?.pending);
+          actions.append(rearm);
+        }
         if (r.enabled && r.sessionId) {
           const resume = button("续接原会话", () => changeRoleDelivery(r, true, true));
           resume.title = "用于会话中断或投递卡住；等原会话空闲后发出续接提示，不重新派单";

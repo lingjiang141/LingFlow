@@ -42,4 +42,7 @@ test("only an initial record heading qualifies for dirty baseline adoption", asy
     ["\n## 新验收条款\n", false],
     ["\n先修改 AC2\n## 返工记录\n", false],
   ]) assert.equal(isRecordAppend(classifySourceEdit(source, frozen, Buffer.from(frozen + suffix))), expected);
+  const insertion = classifySourceEdit(source, frozen, Buffer.from(frozen + "\n## 本轮插入\n沿原票继续\n"));
+  assert.equal(isRecordAppend(insertion, "attempts"), true);
+  assert.equal(isRecordAppend(insertion, "spec"), false);
 });

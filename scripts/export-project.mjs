@@ -4,14 +4,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const projectRoot = fileURLToPath(new URL("../", import.meta.url));
-const roots = ["src", "desktop", "adapters", "panel", "skills", "tests", "ui", ".github"];
+const roots = ["src", "desktop", "adapters", "panel", "skills", "skill-pack", "tests", "ui", ".github"];
 const files = ["package.json", "package-lock.json", ".gitignore", "AGENTS.md", "LICENSE", "README.md", "THIRD_PARTY_NOTICES.md"];
-const docs = ["deployment.md", "data-storage.md", "desktop-pet.md", "lingflow-contract.md", "command-arguments.md", "environment-failure.md", "global-skills.md"];
+const docs = ["deployment.md", "data-storage.md", "desktop-pet.md", "lingflow-contract.md", "command-arguments.md", "environment-failure.md", "global-skills.md", "planning-workflow.md"];
 const scripts = ["check.mjs", "desktop-smoke.mjs", "dsh-contract.mjs", "prepare-dsh.mjs", "register-dsh.mjs", "adapt-global-skills.mjs", "backup-global-skills.ps1",
-  "export-project.mjs", "build-portable.mjs", "migrate-data.ps1", "panel-install.mjs", "panel-e2e.mjs",
+  "export-project.mjs", "build-portable.mjs", "build-installer.mjs", "installer.nsi", "migrate-data.ps1", "panel-install.mjs", "panel-e2e.mjs",
   "panel-embed-probe.mjs", "panel-embed-probe-main.cjs", "panel-visual.mjs", "panel-visual-main.cjs",
   "pet-smoke.mjs", "spec-cycle-smoke.mjs", "spec-cycle-smoke.cjs", "tray-exit-smoke.mjs", "visual-check.mjs", "visual-main.cjs", "import-pet-assets.mjs"];
-const ignored = new Set([".git", "node_modules", ".validation", "dist", ".env", ".env.local"]);
+const ignored = new Set([".git", "node_modules", ".validation", ".magpie-library", "dist", ".env", ".env.local"]);
 
 export function exportProject(destination, source = projectRoot) {
   const root = path.resolve(source), target = path.resolve(destination);

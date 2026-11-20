@@ -6,6 +6,7 @@ import { fixture } from './helpers/evidence-fixture.mjs';
 import { createRelay } from '../adapters/dsh/relay.mjs';
 import { startServer } from '../src/server.mjs';
 import { normalizeWake, consumeWake } from '../src/wake-state.mjs';
+import { roleDeliveryPresentation } from '../ui/role-delivery.js';
 
 const sessions=f=>f.roles.map(role=>({id:role.name,state:'idle',pending:0,jobs:0}));
 const events=(f,kind)=>f.store.db.prepare('SELECT data FROM events WHERE kind=? ORDER BY seq').all(kind).map(row=>JSON.parse(row.data));
@@ -34,6 +35,82 @@ function bridge(f) {
     api:async(action,body)=>action==='valid'?f.wf.validWake(body.wakeId,body.sessionId,body.generation):f.wf.acknowledge(body.wakeId,body.sessionId,'dsh',body.delivery)};
   return {calls,agent,options,relay:createRelay(options)};
 }
+
+test("E1/E4 a failed wake is rearmed once and the host admits a fresh generation", async t => {
+  const f = await fixture(t);
+  const lead = f.roles.find(role => role.kind === "controller");
+  const link = bridge(f);
+  f.store.change(s => f.wf.notice(s,lead.id,"message:restore","保留责任"));
+  const first = f.wf.heartbeat(sessions(f)).deliveries.find(wake => wake.roleId === lead.id);
+  await link.relay.accept([first]);
+  f.store.change(s => Object.assign(s.wakes.find(wake => wake.id === first.id),
+    {state:"failed",closeReason:"delivery-loss-limit",failedAt:Date.now()-1000,deliveryLosses:3}));
+  const restored = f.wf.heartbeat(sessions(f)).deliveries.find(wake => wake.roleId === lead.id);
+  assert.equal(restored.id,first.id);
+  assert.equal(restored.deliveryLosses,0);
+  assert.ok(restored.deliveryRetry > first.deliveryRetry);
+  assert.equal(restored.lastCloseReason,"delivery-loss-limit");
+  await link.relay.accept([restored]);
+  const state = f.store.read();
+  assert.equal(state.wakes.find(wake => wake.id === restored.id).state,"enqueued");
+  assert.equal(state.wakes.filter(wake => ["pending","enqueued"].includes(wake.state) &&
+    wake.noticeIds.includes(restored.noticeIds[0])).length,1);
+  assert.equal(state.notices.find(notice => notice.id === restored.noticeIds[0]).readAt,null);
+  assert.equal(new Set(link.calls.map(call => call.requestId)).size,2);
+  await link.relay.accept([restored]);
+  assert.equal(link.calls.length,2);
+  assert.equal(events(f,"wake.rearmed").length,1);
+  assert.ok(f.call("Lead","inbox").notices.some(notice => notice.id === restored.noticeIds[0]));
+});
+
+test("E2/E3 the operator can recover a suppressed notice and the role card exposes its command", async t => {
+  const f = await fixture(t);
+  const lead = f.roles.find(role => role.kind === "controller");
+  let noticeId;
+  f.store.change(s => {
+    f.wf.notice(s,lead.id,"message:manual-wake","恢复原责任");
+    noticeId=s.notices.at(-1).id;
+    s.wakes.push({id:"manual-failed-wake",roleId:lead.id,sessionId:"Lead",state:"failed",closeReason:"delivery-loss-limit",
+      failedAt:Date.now()-1000,autoRearmedAt:Date.now()-2000,deliveryLosses:3,deliveryRetry:4,noticeIds:[noticeId]});
+  });
+  const role = f.wf.snapshot().roles.find(role => role.id === lead.id);
+  const diagnostic = role.deliveryDiagnostic;
+  assert.deepEqual(diagnostic.actions,["rearmWake","resumeTask","inbox-from-original-session"]);
+  assert.equal(role.resumeStatus,"delivery-issue");
+  const card = roleDeliveryPresentation(role);
+  assert.match(card.status,/已开启 · 投递异常 · 空闲/);
+  assert.deepEqual(card.rearm,diagnostic.nextAction);
+  assert.throws(() => f.call("Review","rearmWake",card.rearm.args),/主控/);
+  const receipt=f.call("Lead",card.rearm.command,card.rearm.args,"manual-rearm");
+  assert.deepEqual(receipt.noticeIds,[noticeId]);
+  assert.equal(receipt.wakeId,"manual-failed-wake");
+  assert.deepEqual(f.call("Lead",card.rearm.command,card.rearm.args,"manual-rearm"),receipt);
+  const wakes=f.wf.heartbeat(sessions(f)).deliveries.filter(wake => wake.roleId===lead.id);
+  assert.equal(wakes.length,1);
+  await bridge(f).relay.accept(wakes);
+  assert.notEqual(f.wf.snapshot().roles.find(role => role.id===lead.id).deliveryDiagnostic?.reason,"delivery-loss-limit");
+});
+
+test("E4 an idle heartbeat restores failed responsibility into the existing active wake", async t => {
+  const f=await fixture(t);
+  const {lead,now}=seed(f);
+  let restoredId;
+  f.store.change(s=>{
+    f.wf.notice(s,lead.id,"message:restore-with-active","恢复被放弃的责任");
+    restoredId=s.notices.at(-1).id;
+    s.wakes.push({id:"previously-failed",roleId:lead.id,sessionId:"Lead",state:"failed",closeReason:"delivery-loss-limit",
+      failedAt:now-1000,deliveryLosses:3,deliveryRetry:4,noticeIds:[restoredId]});
+  });
+  const deliveries=f.wf.heartbeat(sessions(f),now+10).deliveries.filter(wake=>wake.roleId===lead.id);
+  assert.equal(deliveries.length,1);
+  assert.equal(deliveries[0].id,"old-enqueued");
+  assert.ok(deliveries[0].noticeIds.includes(restoredId));
+  await bridge(f).relay.accept(deliveries);
+  const state=f.store.read();
+  assert.equal(state.wakes.find(wake=>wake.id==="previously-failed").rearmedInto,"old-enqueued");
+  assert.equal(state.wakes.filter(wake=>["pending","enqueued"].includes(wake.state)&&wake.noticeIds.includes(restoredId)).length,1);
+  assert.notEqual(f.wf.snapshot().roles.find(role=>role.id===lead.id).deliveryDiagnostic?.reason,"delivery-loss-limit");
+});
 
 test('A: an enqueued controller wake merges a new report within 30 seconds and rejects stale ACKs',async t=>{
   const f=await fixture(t);const {lead,now}=seed(f);report(f,lead,now);
@@ -73,6 +150,90 @@ test('C/E: a 130-second unconsumed admission is retried automatically and wake h
   assert.equal(listedAfter.tasks[0].wakeHealth.stuck,0);
   console.log('C/E '+JSON.stringify({event:'wake.delivery_lost',wakeId:lost.wakeId,ageMs:lost.ageMs,
     stuckBefore:before.stuck,stuckAfter:after.stuck,deliveryAttempts:current.deliveryAttempts}));
+});
+
+test('a successful frozen check acknowledges the assigned dispatch without reading inbox', async t => {
+  const f = await fixture(t);
+  const first = f.wf.heartbeat(sessions(f)).deliveries.find(wake => wake.sessionId === 'Dev');
+  assert.ok(first);
+  f.wf.acknowledge(first.id, 'Dev', 'dsh', { generation: first.deliveryRetry, attempt: 1 });
+  const receipt = f.call('Dev', 'check', { taskId: f.taskId, checkId: 'red', async: true }, 'start-original-ticket');
+  assert.ok(receipt.jobId);
+  const after = f.store.read();
+  const wake = after.wakes.find(item => item.id === first.id);
+  const dispatch = after.notices.find(note => first.noticeIds.includes(note.id) && note.key.startsWith('dispatch:'));
+  assert.equal(wake.closeReason, 'work-confirmed');
+  assert.equal(dispatch.readAt, null);
+  assert.ok(dispatch.workConfirmedAt);
+  assert.equal(f.call('Dev', 'check', { taskId: f.taskId, checkId: 'red', async: true }, 'start-original-ticket').jobId, receipt.jobId);
+  assert.equal(events(f, 'wake.work-confirmed').length, 1);
+  f.wf.heartbeat(sessions(f), wake.handedOffAt + 130000);
+  assert.equal(events(f, 'wake.delivery_lost').some(event => event.wakeId === wake.id), false);
+});
+
+test('reading the assigned ticket confirms only its dispatch and leaves unrelated notices eligible', async t => {
+  const f = await fixture(t);
+  const developer = f.roles.find(role => role.kind === 'developer');
+  f.store.change(s => f.wf.notice(s, developer.id, 'message:separate', '另一条仍需处理的消息'));
+  const first = f.wf.heartbeat(sessions(f)).deliveries.find(wake => wake.sessionId === 'Dev');
+  assert.ok(first);
+  f.call('Review', 'inspect', { taskId: f.taskId });
+  assert.equal(events(f, 'wake.work-confirmed').length, 0);
+  f.call('Dev', 'inspect', { taskId: f.taskId, section: 'events' });
+  assert.equal(events(f, 'wake.work-confirmed').length, 0);
+  f.call('Dev', 'inspect', { taskId: f.taskId });
+  assert.equal(f.wf.validWake(first.id, 'Dev', first.deliveryRetry).valid, false);
+  const replacement = f.wf.heartbeat(sessions(f)).deliveries.find(wake => wake.sessionId === 'Dev');
+  assert.ok(replacement);
+  const message = f.store.read().notices.find(note => note.key === 'message:separate');
+  assert.deepEqual(replacement.payloadNoticeIds, [message.id]);
+  const inbox = f.call('Dev', 'inbox');
+  assert.ok(inbox.notices.some(note => note.key.startsWith('dispatch:') && note.workConfirmedAt));
+  assert.ok(inbox.notices.some(note => note.key === 'message:separate'));
+});
+
+test('a reviewer reading the assigned candidate stops the wake through the worker API', async t => {
+  const f = await fixture(t);
+  const reviewer = f.roles.find(role => role.kind === 'reviewer');
+  f.store.change(s => {
+    const task = s.tasks[0];
+    Object.assign(task, { state: 'reviewing', assignee: reviewer.id, candidate: 'frozen-candidate' });
+    f.wf.notice(s, reviewer.id, 'review:' + task.id + ':' + task.revision, '审查当前候选', task.id);
+  });
+  const first = f.wf.heartbeat(sessions(f)).deliveries.find(wake => wake.sessionId === 'Review');
+  assert.ok(first);
+  f.wf.acknowledge(first.id, 'Review', 'dsh', { generation: first.deliveryRetry, attempt: 1 });
+  f.close();
+  const app = await startServer({ dataDir: f.dir, port: 0 });
+  t.after(() => app.close());
+  await app.workflow.call('ui', 'enable', { roleId: reviewer.id, enabled: true }, 'enable-reviewer-for-fixture');
+  const inspected = await app.workflow.call('Review', 'inspect', { taskId: f.taskId });
+  assert.equal(inspected.candidate, 'frozen-candidate');
+  await app.workflow.heartbeat(sessions(f), Date.now() + 130000);
+  const snapshot = await app.workflow.snapshot();
+  const wake = snapshot.wakes.find(item => item.id === first.id);
+  assert.equal(wake.closeReason, 'work-confirmed');
+  assert.equal(wake.deliveryLosses, 0);
+  assert.equal((await app.workflow.call('Review', 'inbox')).notices.find(note =>
+    first.noticeIds.includes(note.id)).workConfirmedAt, wake.consumedAt);
+});
+
+test('an unread answer in a mixed card remains pending while its developer is working', async t => {
+  const f = await fixture(t);
+  const developer = f.roles.find(role => role.kind === 'developer');
+  f.store.change(s => f.wf.notice(s, developer.id, 'answer:unread', '原票答复', f.taskId));
+  const first = f.wf.heartbeat(sessions(f)).deliveries.find(wake => wake.sessionId === 'Dev');
+  assert.ok(first);
+  f.wf.acknowledge(first.id, 'Dev', 'dsh', { generation: first.deliveryRetry, attempt: 1 });
+  f.call('Dev', 'progress', { taskId: f.taskId, text: '正在处理原票' });
+  const busy = sessions(f).map(session => session.id === 'Dev' ? { ...session, state: 'running' } : session);
+  const later = Date.now() + 130000;
+  assert.equal(f.wf.heartbeat(busy, later).deliveries.some(wake => wake.sessionId === 'Dev'), false);
+  assert.equal(events(f, 'wake.delivery_lost').length, 0);
+  const next = f.wf.heartbeat(sessions(f), later + 1000).deliveries.find(wake => wake.sessionId === 'Dev');
+  const answer = f.store.read().notices.find(note => note.key === 'answer:unread');
+  assert.deepEqual(next.payloadNoticeIds, [answer.id]);
+  assert.equal(answer.readAt, null);
 });
 
 test('D/F: inbox returns uncovered report and check notices, marks all read, and closes wakes with timestamps',async t=>{
@@ -138,6 +299,7 @@ test('HTTP and reader/writer workers carry the delivery generation through valid
   };
   await app.workflow.call('ui','enable',{roleId:lead.id,enabled:true},'epoch-enable-lead');
   await app.workflow.call('ui','enable',{roleId:dev.id,enabled:true},'epoch-enable-dev');
+  await api('call',{sessionId:'Dev',command:'question',operationId:'epoch-initial-question',args:{taskId:f.taskId,text:'第一个真实待办'}});
   const first=(await app.workflow.heartbeat(sessions(f))).deliveries.find(wake=>wake.roleId===lead.id);assert.ok(first);
   await api('ack',{wakeId:first.id,sessionId:'Lead',delivery:{generation:first.deliveryRetry,attempt:1}});
   await api('call',{sessionId:'Dev',command:'question',operationId:'epoch-question',args:{taskId:f.taskId,text:'需要答复的新问题'}});

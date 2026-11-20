@@ -45,7 +45,8 @@ export function handoffLines(notice, task, roles = []) {
     if (task.planId) {
       const files = ["spec", "tickets", "attempts"].filter((key) => task.sources?.[key]?.file)
         .map((key) => `${key}=${excerpt(task.sources[key].file, 150)}`);
-      lines.push("冻结规划：" + files.join("；") + " · inspectPlan " + JSON.stringify({ planId: task.planId }));
+      lines.push("派发时的规划快照" + (task.specVersion ? "（spec " + task.specVersion + "）" : "") + "：" +
+        files.join("；") + " · inspectPlan " + JSON.stringify({ planId: task.planId }));
     }
     if (task.verification) {
       lines.push("验收条款：" + (task.verification.acceptance ?? []).slice(0, 3).map(({ id, text }) => `${id} ${excerpt(text, 80)}`).join("；"));
@@ -60,6 +61,7 @@ export function handoffLines(notice, task, roles = []) {
   }
   if (record) {
     lines.push(`回执 ${record.id.slice(0, 8)} · 责任版本 ${record.revision ?? "未记录"} · 候选 ${record.candidate?.slice(0, 12) ?? "未受理"}`);
+    if (record.acceptanceSummary) lines.push(record.acceptanceSummary);
     if (record.artifacts?.length) lines.push(pathLine("成员提供的证据路径", record.artifacts));
     if (record.manifest?.files?.length) lines.push(pathLine("交付改动", record.manifest.files.map(({ file }) => file)));
     const checkIds = record.checks?.filter(({ jobId }) => jobId) ?? [];

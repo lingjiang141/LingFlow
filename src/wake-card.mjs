@@ -1,5 +1,6 @@
 import { noticeQualitySummary } from "../ui/quality-summary.js";
 import { handoffLines, handoffRecord } from "../ui/handoff-card.js";
+import { silentResumeText } from "./controller-notices.mjs";
 
 const LIMIT = 4;
 
@@ -23,11 +24,19 @@ function excerpt(value, limit = 80) {
 }
 
 function purpose(notice, task, job, kind, ref, phase) {
+  if (notice.silent) return { label: "角色已开启 · 本轮无责任", detail: silentResumeText };
   switch (kind) {
+    case "git-drift":
+      return { label: "Git 提交漂移 · 提交者未知",
+        detail: `${notice.drift?.from.slice(0, 12) ?? "?"} → ${notice.drift?.to.slice(0, 12) ?? "?"} · 冻结范围冲突 ${notice.drift?.conflicts.length ?? 0} 项`,
+        next: `查看 describeDrift ${JSON.stringify({ taskId: notice.taskId })}，核对原票后处理。` };
     case "dispatch":
+      if (task?.fingerprintRecovery) {
+        return { label: "指纹口径已续接", detail: "原候选待重新交付", next: notice.summary, priority: 0 };
+      }
       return {
         label:
-          task?.revision > 1
+          task?.reworkReason || task?.revision > 1
             ? "返工续接"
             : task?.scheduleVersion
               ? "调度更新后续接"
@@ -35,7 +44,7 @@ function purpose(notice, task, job, kind, ref, phase) {
                 ? "新只读任务"
                 : "新开发任务",
         detail:
-          task?.revision > 1
+          task?.reworkReason || task?.revision > 1
             ? task.reworkReason
             : task?.scheduleHistory?.at(-1)?.reason,
         next: "查看原票范围和验收条件；动手前先核对冻结规划、写入边界和检查。",
@@ -131,6 +140,8 @@ function purpose(notice, task, job, kind, ref, phase) {
       };
     case "preflight-ready":
       return { label: "准入恢复 · 原票已自动分派", next: "不需要确认或重复派单；沿原票等待回报。", priority: 2 };
+    case "wake-abandoned":
+      return { label: "原唤醒已停止重投", detail: notice.summary, priority: 0 };
     case "delivery-blocked":
       return { label: "原票投递受阻", detail: notice.summary, next: "从 list 查看原票投递状态及原因。明确拒绝达上限可用 redeliver；结果待对账时请成员在原会话读取 inbox。", priority: 0 };
     case "dependency-ready":
@@ -177,6 +188,8 @@ function purpose(notice, task, job, kind, ref, phase) {
         priority: 0,
       };
     case "message":
+      if (/^主控直达消息|^成员回复/.test(notice.summary))
+        return { label: "团队消息", next: "在 inbox 阅读消息，必要时用 message 回复。" };
       return notice.summary.startsWith("规划已交付")
         ? { label: "规划已交付", next: "在 inbox 查看规划产物与待决项。" }
         : notice.summary.startsWith("主控已回复监管消息")
@@ -218,7 +231,7 @@ export function wakeSummary(notices, tasks, jobs, roles = []) {
   const groups = new Map();
   for (const notice of notices) {
     const [kind, ref, phase] = notice.key.split(":");
-    const task = notice.taskId
+    const task = !notice.silent && notice.taskId
       ? tasks.find((item) => item.id === notice.taskId)
       : undefined;
     const job =
@@ -227,10 +240,10 @@ export function wakeSummary(notices, tasks, jobs, roles = []) {
         : undefined;
     const item = purpose(notice, task, job, kind, ref, phase);
     // Repeated blockers on the same ticket share a row; distinct jobs keep their names.
-    const key = JSON.stringify([kind, task?.id, item.label, job?.id, ["report", "report-blocked", "review"].includes(kind) ? ref : undefined]);
+    const key = notice.silent ? "silent-resume" : JSON.stringify([kind, task?.id, item.label, job?.id, ["report", "report-blocked", "review"].includes(kind) ? ref : undefined]);
     const previous = groups.get(key);
-    const quality = noticeQualitySummary(notice, task);
-    groups.set(key, { ...item, task, quality, handoff: handoffLines(notice, task, roles), count: (previous?.count ?? 0) + 1, hasPolicy: notice.actionable !== undefined, actionable: previous?.actionable || notice.actionable, controllerChecked: notice.controllerChecked && (previous?.controllerChecked ?? true) });
+    const quality = notice.silent ? null : noticeQualitySummary(notice, task);
+    groups.set(key, { ...item, task, quality, handoff: notice.silent ? [] : handoffLines(notice, task, roles), count: (previous?.count ?? 0) + 1, hasPolicy: notice.actionable !== undefined, actionable: previous?.actionable || notice.actionable, controllerChecked: notice.controllerChecked && (previous?.controllerChecked ?? true) });
   }
   const items = [...groups.values()].sort(
     (a, b) => Number(Boolean(b.actionable)) - Number(Boolean(a.actionable)) || (a.priority ?? 1) - (b.priority ?? 1),
@@ -244,7 +257,7 @@ export function wakeSummary(notices, tasks, jobs, roles = []) {
     const extra = count > 1 ? `（共 ${count} 条）` : "";
     const result = quality ? `\n  ${quality.fromReviewAssignment ? "开发自测：\n  " : ""}${quality.line}` : "";
     const truncated = snippet.endsWith("…") && handoff.length ? "\n  摘要已截断；请用上面的 inspect 查看完整原文。" : "";
-    return `- ${hasPolicy ? "[actionable: " + Boolean(actionable) + "; 主控已自查: " + Boolean(controllerChecked) + "] " : ""}${label}${ticket}${extra}${result}${handoff.map((line) => "\n  " + line).join("")}${snippet ? "\n  摘要：" + snippet : ""}${truncated}\n  下一步：${next}`;
+    return `- ${hasPolicy ? "[actionable: " + Boolean(actionable) + "; 主控已自查: " + Boolean(controllerChecked) + "] " : ""}${label}${ticket}${extra}${snippet ? "\n  摘要：" + snippet : ""}${next ? "\n  下一步：" + next : ""}${result}${handoff.map((line) => "\n  " + line).join("")}${truncated}`;
   });
   const remaining =
     notices.length - shown.reduce((total, item) => total + item.count, 0);

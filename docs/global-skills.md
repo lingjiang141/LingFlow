@@ -1,6 +1,6 @@
 # 将已有全局工程技能适配到 LingFlow
 
-这个工具用于已有 Codex、DSH 全局工程技能仍指向旧工作流的情况。它保留 `/to-spec`、`/to-tickets`、`/to-planned-attempts` 等调用名称，替换核心规划与交付流程；保留通用调研、设计及测试知识，统一其工作流入口。安装不会重启会话、创建任务或派发责任。
+这个兼容工具用于迁移旧的 Codex 全局工程技能。DSH 直接调用自身 `.dsh/skills`；本工具不会修改 DSH 技能，LingFlow 也不向角色注入仓库技能。安装不会重启会话、创建任务或派发责任。
 
 先预览：
 
@@ -8,7 +8,7 @@
 node scripts/adapt-global-skills.mjs
 ```
 
-默认目标是当前用户的 `.codex/skills` 与 `.dsh/skills`。可分别用 `--codex-root`、`--dsh-root` 指定实际目录；目标须已安装工程技能。工具新增 `controller` 入口，将旧极速技能名保留为统一 LingFlow 规则的兼容入口。已存在的显式调用策略和其他 UI 元数据保持原样。
+默认写入目标为当前用户的 `.codex/skills`，可用 `--codex-root` 指定。包里的 `--dsh-root` 仅用于选择备份来源，不做适配或覆盖。已存在的显式调用策略和其他 UI 元数据保持原样。
 
 确认预览后执行，备份 ZIP 必须是尚不存在的绝对路径：
 

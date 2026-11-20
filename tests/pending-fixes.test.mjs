@@ -80,6 +80,7 @@ test('controller confirms an equivalent commit once and keeps report, candidate,
   const result=f.call('Lead','confirmCommit',args,'confirm-exact-commit');
   assert.equal(result.state,'applied');assert.equal(result.preservedChecks.length,3);
   const current=f.store.read().tasks[0];assert.equal(current.candidate,old.candidate);assert.equal(current.state,old.state);
+  assert.deepEqual(current.scheduleHistory.at(-1).previous.writes,old.writes);
   assert.deepEqual(current.dependencies,old.dependencies);assert.deepEqual(current.reports,old.reports);
   assert.deepEqual(f.call('Lead','confirmCommit',args,'confirm-exact-commit'),result);
   assert.equal((await f.run('independent',false,'Lead')).state,'passed');
@@ -111,7 +112,7 @@ test('cache diagnostics count only actual admissions and include stable/full byt
   assert.equal(first.contextFull,true);assert.equal(first.promptBytes,Buffer.byteLength(first.text));assert.ok(first.stableBytes>0);assert.ok(first.toolsVersion);
   f.wf.acknowledge(first.id,'Lead');f.wf.acknowledge(first.id,'Lead');
   const member=f.store.read().roles.find(role=>role.id===lead.id);const project=f.store.read().projects[0];
-  assert.ok(Buffer.byteLength(wakeText(project,member,true,'next'))<first.promptBytes);
+  assert.ok(Buffer.byteLength(wakeText(project,member,true,'next',f.store.read()))<first.promptBytes);
   const diagnostic=f.call('Lead','cacheDiagnostics',{roleId:lead.id,last24h:true});
   assert.equal(diagnostic.deliveries,1);assert.equal(diagnostic.contextFullCount,1);assert.equal(diagnostic.averagePromptBytes,first.promptBytes);
   assert.equal(f.call('Dev','cacheDiagnostics',{roleId:lead.id}).error,undefined);

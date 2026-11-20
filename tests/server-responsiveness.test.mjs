@@ -183,7 +183,12 @@ async function probe(mode) {
       return;
     }
     if (mode === "evidence") {
-      const { deliveries: [wake] } = await heartbeat();
+      let wake;
+      for (let attempt = 0; attempt < 30 && !wake; attempt++) {
+        if (attempt) await delay(50);
+        [wake] = (await heartbeat()).deliveries;
+      }
+      assert.ok(wake, "the fixture must have a pending wake before concurrent validation");
       const taskCall = (command, timeout) => post("/api/bridge/call", bridgeToken,
         { command, sessionId: "dev-session", args: { taskId: "ticket" } }, timeout);
       const started = performance.now();

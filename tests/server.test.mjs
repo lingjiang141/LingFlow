@@ -41,6 +41,10 @@ test("HTTP API authenticates, rejects foreign origin and persists state", async 
     args: { name: "API项目", root: dataDir },
   });
   assert.equal(res.status, 200);
+  const { id: projectId } = await res.json();
+  const cache = await post("/api/ui/call", app.uiToken, { command: "buildCache", args: { projectId } });
+  assert.equal(cache.status, 200);
+  assert.deepEqual(await cache.json(), { entries: [], hits: 0, misses: 0, savedMs: 0 });
   assert.equal(
     (await (await post("/api/ui/snapshot", app.uiToken)).json()).projects
       .length,
@@ -62,7 +66,7 @@ test("HTTP API authenticates, rejects foreign origin and persists state", async 
   );
 });
 
-test("controller receives the turn rule on startup, reopen, dispatch and report wake", async (t) => {
+test("controller gets a quiet startup card and the turn rule when reading context or receiving real work", async (t) => {
   mkdirSync(".validation", { recursive: true });
   const dataDir = mkdtempSync(path.resolve(".validation", "controller-turn-"));
   const configuration = readConfig(dataDir);
@@ -118,13 +122,23 @@ test("controller receives the turn rule on startup, reopen, dispatch and report 
   }
   const lastPrompt = (sessionId) => prompts.findLast((p) => p.sessionId === sessionId)?.content[0].text;
 
-  await heartbeat();
-  assert.match(lastPrompt("controller"), /角色上下文.*主控/);
-  assert.ok(lastPrompt("controller").includes(CONTROLLER_TURN_RULE));
-  assert.match(lastPrompt("controller"), /项目自定义行为规范/);
-  assert.ok(!lastPrompt("developer").includes(CONTROLLER_TURN_RULE));
-  assert.equal((await call("controller", "inbox")).context, undefined, "ACK already delivered the role context");
-  await call("developer", "inbox");
+  const startup = await heartbeat();
+  assert.equal(startup.length, 1);
+  assert.equal(startup[0].silent, true);
+  assert.equal(startup[0].actionable, false);
+  assert.match(lastPrompt("controller"), /角色已开启 · 本轮无责任/);
+  assert.match(lastPrompt("controller"), /亲自实现或修复/);
+  assert.doesNotMatch(lastPrompt("controller"), /下一步|角色上下文/);
+  assert.equal(lastPrompt("developer"), undefined);
+  const { context } = await call("controller", "inbox");
+  assert.ok(context.rules.includes(CONTROLLER_TURN_RULE));
+  assert.match(JSON.stringify(context), /项目自定义行为规范/);
+  const laterInbox = await call("controller", "inbox");
+  assert.equal(laterInbox.context, undefined);
+  assert.match(laterInbox.controllerBoundary, /亲自实现或修复.*回投责任开发/);
+  const developerInbox = await call("developer", "inbox");
+  assert.ok(!developerInbox.context.rules.includes(CONTROLLER_TURN_RULE));
+  assert.equal(developerInbox.controllerBoundary, undefined);
   assert.ok((await call("controller", "context")).rules.includes(CONTROLLER_TURN_RULE));
   assert.ok((await call("controller", "guide")).guide.includes(CONTROLLER_TURN_RULE));
 
@@ -133,8 +147,7 @@ test("controller receives the turn rule on startup, reopen, dispatch and report 
   await ui("enable", { roleId, enabled: true });
   await heartbeat();
   assert.match(lastPrompt("controller"), /角色已开启/);
-  assert.ok(lastPrompt("controller").includes(CONTROLLER_TURN_RULE), "Explicit role reopening refreshes context once");
-  assert.equal((await call("controller", "inbox")).context, undefined);
+  assert.ok((await call("controller", "inbox")).context.rules.includes(CONTROLLER_TURN_RULE));
 
   agents.get("controller").status = "running";
   const requirement = await call("controller", "approve", { text: "核对测试输入", source: "验收夹具" }, "approve");
@@ -149,6 +162,9 @@ test("controller receives the turn rule on startup, reopen, dispatch and report 
   const receipt = await call("controller", "operation", { id: "dispatch" });
   assert.equal(receipt.state, "stored");
   assert.equal(receipt.result.taskId, dispatch.taskId);
+  assert.match(receipt.controllerBoundary, /亲自实现或修复/);
+  for (const command of ["inspect", "diagnoseTask"])
+    assert.match((await call("controller", command, { taskId: dispatch.taskId })).controllerBoundary, /亲自实现或修复/);
 
   // Model-free host fixture ends the dispatch turn and makes no status calls.
   agents.get("controller").status = "idle";

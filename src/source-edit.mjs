@@ -33,7 +33,8 @@ export function frozenSourceBytes(source, frozenText) {
     .find((bytes) => sourceFileFingerprint(source.file, bytes) === source.digest);
 }
 
-export function isRecordAppend(note) {
+export function isRecordAppend(note, sourceKind) {
   return note?.kind === "source-appended" &&
-    /^#{2,6}[ \t]+(?:返工记录|实施记录|验收记录|进度记录|交付记录|变更记录|rework notes?|implementation notes?|validation notes?|progress notes?|handoff notes?)(?:\s|[：:(（-]|$)/i.test(note.firstAppendedHeading ?? "");
+    (/^#{2,6}[ \t]+(?:返工记录|实施记录|验收记录|进度记录|交付记录|变更记录|rework notes?|implementation notes?|validation notes?|progress notes?|handoff notes?)(?:\s|[：:(（-]|$)/i.test(note.firstAppendedHeading ?? "") ||
+      sourceKind === "attempts" && /^#{2,6}[ \t]+本轮插入(?:\s|[：:(（-]|$)/.test(note.firstAppendedHeading ?? ""));
 }

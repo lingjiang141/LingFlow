@@ -57,6 +57,12 @@ test('F27 a real timed-out preStep records elapsed time and proposes a new ticke
   assert.deepEqual(getTask(f).verification,frozen);
   const diagnosis=f.call('Lead','diagnoseTask',{taskId:f.taskId});
   assert.equal(diagnosis.classification,'preparation-timeout');assert.equal(diagnosis.nextAction.command,'dispatchPlan');
+  const developer=f.roles.find(role=>role.kind==="developer");
+  f.store.change(s=>{s.roles.find(role=>role.id===developer.id).enabled=false;});
+  const blocked=f.call("Lead","checkStatus",{jobId:job.id}).nextAction;
+  assert.equal(blocked.command,"list");
+  assert.deepEqual(blocked.blockedBy,[{roleId:developer.id,reason:"disabled"}]);
+  f.store.change(s=>{s.roles.find(role=>role.id===developer.id).enabled=true;});
   assert.equal(f.call('Lead','previewPlan',job.nextAction.args).state,'valid');
   for(const action of job.nextAction.before) {
     const args={...action.args,...(action.command==='reconcileCheck'&&{evidence:'worker 已记录构建超时后的子进程 close 事件，测试确认进程已退出'})};
@@ -69,6 +75,40 @@ test('F27 a real timed-out preStep records elapsed time and proposes a new ticke
   assert.ok(successor.ownedDirty.includes(f.testFile));
   assert.equal(successor.state,'assigned');
   assert.deepEqual(getTask(f).verification,frozen,'only the new contract may use the proposed budget');
+});
+
+test("C1/C3 a prior genuine red enables only original-ticket budget repair",async t=>{
+  const prep={timeoutMs:10000,preSteps:[{argv:["node","-e","const fs=require('node:fs');fs.mkdirSync('node_modules/.cache',{recursive:true});fs.writeFileSync('node_modules/.cache/build-proof','prepared');"],
+    outputs:["node_modules/.cache/build-proof"],timeoutMs:5000}]};
+  const checks=["red","green","full"].map(stage=>({id:stage,stage,argv:["node","e2e/new-case.cjs"],
+    inputs:["e2e/new-case.cjs","implementation.cjs"],covers:["AC1"],...prep,...(stage==="red"&&{expectedOutput:"AssertionError"})}));
+  const f=await fixture(t,"AssertionError",{checks});
+  f.put(f.testFile,"require('node:assert/strict').equal(require('../implementation.cjs'),'new');");
+  const red=await f.run("red");
+  assert.equal(red.state,"passed",red.error);
+  f.put("implementation.cjs","module.exports='new';");
+  f.call("Dev","yieldForSchedule",{taskId:f.taskId,reason:"停写修订预算"});
+  f.store.change(s=>{
+    const task=s.tasks[0],check=task.verification.checks.find(check=>check.id==="green");
+    s.checkJobs.push({id:"over-budget",taskId:task.id,projectId:task.projectId,check,state:"interrupted",finishedAt:Date.now(),
+      classification:"preparation-timeout",receipt:{timedOut:true,preparation:{elapsedMs:7400,steps:[{timedOut:true,elapsedMs:7200}]}}});
+  });
+  const finding=f.call("Lead","diagnoseTask",{taskId:f.taskId});
+  assert.equal(finding.nextAction.args.allowCheckRevision,true);
+  assert.equal(finding.shortfallMs,2200);
+  assert.equal(finding.suggestedTimeoutMs,9360);
+  const entry=f.call("Lead","checkStatus",{taskId:f.taskId}).find(item=>item.id==="over-budget");
+  assert.equal(entry.shortfallMs,finding.shortfallMs);
+  assert.equal(entry.suggestedTimeoutMs,finding.suggestedTimeoutMs);
+  const receipt=f.call("Lead",finding.nextAction.command,finding.nextAction.args);
+  assert.equal(receipt.nextAction.command,"registerChecks");
+  const args=structuredClone(receipt.nextAction.args);
+  args.checks[0].argv=["node","-e","0"];
+  assert.throws(()=>f.call("Dev","registerChecks",args),/只允许提高/);
+  assert.equal(f.call("Dev",receipt.nextAction.command,receipt.nextAction.args).state,"stored");
+  const revised=getTask(f),newRed=revised.verification.checks.find(check=>check.id==="red");
+  assert.ok(newRed.preSteps[0].timeoutMs>=9360);
+  assert.equal(f.wf.validCheck(f.store.read(),revised,newRed).id,red.id);
 });
 
 test('F27 preparation-heavy timeouts differ from execution timeouts',()=>{

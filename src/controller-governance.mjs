@@ -27,11 +27,16 @@ export function releaseHandoff(state, task, git) {
     nextAction:successorAction(state,task,ownedDirty)};
 }
 
-export function successorAction(state,task,ownedDirty=[]) {
+export function successorAction(state,task,ownedDirty=[], {requireAvailable=false}={}) {
   const writes=[...originalTaskWrites(task)];
   const members=state.roles.filter(role=>role.projectId===task.projectId&&role.kind==='developer'&&!role.archivedAt);
-  const idle=members.find(role=>role.enabled&&role.state==='idle'&&role.pending===0&&role.jobs===0);
-  const developer=idle??members.find(role=>role.id===task.developerId);
+  const available=members.filter(role=>role.enabled&&["idle","running"].includes(role.state)&&role.sessionId);
+  const idle=(requireAvailable?available:members).find(role=>role.enabled&&role.state==='idle'&&role.pending===0&&role.jobs===0);
+  const developer=idle??(requireAvailable ? available.find(role=>role.id===task.developerId)??available[0] :
+    members.find(role=>role.id===task.developerId));
+  if(requireAvailable&&!developer)return {command:'list',ownerRole:'controller',ownerId:task.dispatchedBy,args:{},
+    blockedBy:members.length?members.map(role=>({roleId:role.id,reason:!role.enabled?'disabled':'offline'})):[{reason:'no-developer'}],
+    message:'当前无已开启且在线的开发成员。用 list 核对候选成员状态后再登记承接票。'};
   const base=(task.ticketKey??'HANDOFF').slice(0,55);
   let suffix=1,key;
   do{key=`${base}-HANDOFF-${suffix++}`;}while(state.tasks.some(peer=>peer.projectId===task.projectId&&peer.ticketKey===key));
@@ -45,6 +50,8 @@ export function successorAction(state,task,ownedDirty=[]) {
     risk:task.risk,riskReason:task.riskReason,readOnly:task.readOnly,writes,reads:[...(task.reads??[])],
     contextReads:[...(task.contextReads??[])],resources:[...(task.resources??[])],ownedDirty,
     after:(task.dependencies??[]).map(taskId=>({taskId,stage:task.dependencyStages?.[taskId]??'verified'})),
+    ...(task.baseline && task.verification && ownedDirty.some(file => !coversPath(task.verification.testWrites, file)) &&
+      {upstreamRedTaskId:task.id}),
     ...(task.verification&&{verification:structuredClone(task.verification)})};
   // Frozen checks store an empty optional marker; public dispatch input uses
   // absence for that marker. Keep the skeleton valid through the real parser.

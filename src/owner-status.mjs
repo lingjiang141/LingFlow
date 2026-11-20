@@ -1,10 +1,11 @@
 export const SILENCE_THRESHOLD_MS = 10 * 60 * 1000;
 const activeJob = job => ["queued", "launching", "uncertain"].includes(job.state);
-export function ownerStatus(state, task, now = Date.now()) {
-  const member = state.roles.find(member => member.id === task.developerId);
+export function ownerStatus(state, task, now = Date.now(), ownerId = task.developerId) {
+  const member = state.roles.find(member => member.id === ownerId);
   const heartbeat = member?.connectedAt ?? 0, observed = member?.observation;
-  if (!['assigned','rework','paused'].includes(task.state) || task.releasedScope) return {
-    ownerState:'none',ownerSilentForMs:0,lastHeartbeatAt:heartbeat||null,lastTurnState:observed?.turn?.outcome??member?.state??'unknown',silent:false,blockers:[],
+  if (!['assigned','rework','paused','reviewing','waiting_review','waiting_verification'].includes(task.state) || task.releasedScope) return {
+    ownerState:'none',applicable:false,ownerSilentForMs:0,lastHeartbeatAt:heartbeat||null,lastTurnState:observed?.turn?.outcome??member?.state??'unknown',silent:false,
+    blockers:[{code:'state-not-applicable',detail:`当前状态 ${task.state} 不适用成员静默恢复`}],
   };
   const fresh = Boolean(heartbeat && now - heartbeat < 15000 && member.bridgePresent !== false);
   const blockers = [];
@@ -25,7 +26,21 @@ export function ownerStatus(state, task, now = Date.now()) {
 }
 export function recoveryHint(state, task) {
   const status = ownerStatus(state, task);
-  if (!status.silent) return `责任正在执行或状态未确认：${status.blockers.map(item => item.detail).join("；")}。`;
+  const inspect = `diagnoseTask ${JSON.stringify({taskId:task.id})}`;
+  if (status.applicable === false || ["waiting_review", "reviewing", "waiting_verification", "waiting_batch"].includes(task.state)) {
+    const id = JSON.stringify({taskId:task.id});
+    const guidance = task.releasedScope ? `用 inspect ${id} 核对已释放责任` : {
+      trial: `用户已试用时用 accept 提交实际 evidence。需要变更契约时先用 rework ${JSON.stringify({taskId:task.id,adjustScope:true,reason:"交回原票核对新范围"})}`,
+      ready: `用 summarize ${id} 提交试用步骤与验收证据，或先执行 ${inspect} 核对返工路径`,
+      queued: `用 ${inspect} 核对待投递的准入条件`,
+      waiting_review: `用 ${inspect} 核对待审查回执`,
+      reviewing: `用 ${inspect} 核对当前审查，等待原审查回合收口`,
+      waiting_verification: `用 ${inspect} 核对待执行的冻结探针`,
+      waiting_batch: `用 ${inspect} 核对累计验证`,
+    }[task.state] ?? `执行 ${inspect} 核对原票`;
+    return `当前状态 ${task.state}。 ${guidance}。`;
+  }
+  if (!status.silent) return `${status.blockers.map(item => item.detail).join("。") || "暂无法确认成员责任"}。执行 ${inspect} 核对当前阻塞。`;
   return `成员已静默 ${Math.floor(status.ownerSilentForMs / 60000)} 分钟；可执行 resumeTask ${JSON.stringify({taskId:task.id,reason:"确认静默后沿原票恢复"})}，或请成员 yieldForSchedule ${JSON.stringify({taskId:task.id,reason:"已停写，交回调度"})}。`;
 }
 export function updateOwnerSilence(state, task, now) {

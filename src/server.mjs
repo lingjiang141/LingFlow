@@ -242,7 +242,7 @@ export async function startServer({
       res.writeHead(error.message === "未授权" ? 401 : 400, {
         "Content-Type": "application/json; charset=utf-8",
       });
-      res.end(JSON.stringify({ error: error.message, code: error.verificationCode, violations: error.violations }));
+      res.end(JSON.stringify({ error: error.message, code: error.verificationCode, violations: error.violations, nextAction: error.nextAction }));
     }
   });
   try {

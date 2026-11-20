@@ -4,7 +4,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { redFailure } from "./red-evidence.mjs";
 import { fingerprint } from "./files.mjs";
-import { prepareCheck } from "./check-preparation.mjs";
+import { artifactsIntact, prepareCheck } from "./check-preparation.mjs";
 import { detectEnvironmentFailure, environmentRetry } from "./environment-failure.mjs";
 import { checkEvidenceFacts } from './check-evidence.mjs';
 import { preparationTimeoutHint } from './preparation-budget.mjs';
@@ -48,7 +48,7 @@ function saveResult(result, output = "") {
 
 function matchesInputs() {
   try {
-    return fingerprint(job.root, job.files) === JSON.parse(job.input).at(-1);
+    return fingerprint(job.root, job.files, [], undefined, { eol: job.fingerprintEol ?? "raw", rawPaths: job.rawPaths }) === JSON.parse(job.input).at(-1);
   } catch {
     return false;
   }
@@ -61,13 +61,15 @@ if (!matchesInputs()) {
 
 const [program, ...args] = job.check.argv;
 let preparation;
-try { preparation = await prepareCheck(job.root, job.check); }
+try { preparation = await prepareCheck(job.root, job.check, { projectId: job.projectId, dataDir: path.dirname(path.dirname(directory)) }); }
 catch (error) {
   saveResult({ exitCode: null, failureOutputSeen: false, expectedOutputSeen: false, preparation: error.preparation,
     preparationError: error.message, launchError: error.message,phase:error.phase??'preparation',timedOut:Boolean(error.timedOut) }, error.message);
   process.exit(0);
 }
-if (!matchesInputs()) { saveResult({ stale: true, preparation }, "构建前置修改了冻结输入"); process.exit(0); }
+if (!matchesInputs() || !artifactsIntact(job.root, preparation)) {
+  saveResult({ stale: true, preparation }, "检查启动前冻结输入或构建产物已变化"); process.exit(0);
+}
 const environment = { ...process.env, LINGFLOW_TEST_DATA_ROOT: directory };
 if (program === "node" && job.electron) environment.ELECTRON_RUN_AS_NODE = "1";
 else delete environment.ELECTRON_RUN_AS_NODE;
@@ -122,15 +124,16 @@ const timer = setTimeout(() => {
 }, Math.max(1, job.check.timeoutMs - preparation.elapsedMs));
 child.on("close", (exitCode, signal) => {
   clearTimeout(timer);
+  const artifactsVerified = artifactsIntact(job.root, preparation);
   saveResult(
     {
       exitCode,
-      preparation,
+      preparation: { ...preparation, ...(artifactsVerified && { artifactsVerified: true }) },
       signal,
       timedOut,
       launchError,
       truncated,
-      stale: !matchesInputs(),
+      stale: !matchesInputs() || !artifactsVerified,
       expectedOutputSeen:
         !job.check.expectedOutput || output.includes(job.check.expectedOutput),
       failureOutputSeen: job.check.stage === "red" ? exitCode === job.check.expectedExit && exitCode > 0 && redFailure(job.check, output) :

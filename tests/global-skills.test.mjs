@@ -41,6 +41,7 @@ test('Windows apply requires a fresh verified ZIP and never overwrites a prior b
     assert.equal(run.status,0,run.stderr);assert.ok(existsSync(zip));
     assert.equal(JSON.parse(run.stdout).backup.files,2);
     assert.match(readFileSync(path.join(roots[0],'implement/SKILL.md'),'utf8'),/LingFlow/);
+    assert.match(readFileSync(path.join(roots[1],'implement/SKILL.md'),'utf8'),/Original payload/);
     const before=readFileSync(zip);
     const repeat=spawnSync(process.execPath,args,{encoding:'utf8',windowsHide:true});
     assert.notEqual(repeat.status,0);assert.deepEqual(readFileSync(zip),before);

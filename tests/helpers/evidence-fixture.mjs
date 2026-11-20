@@ -7,6 +7,8 @@ import { Store } from "../../src/store.mjs";
 import { Workflow } from "../../src/workflow.mjs";
 import { startCheckRunner } from "../../src/check-runner.mjs";
 
+export const versionedSpec = (body = "approved") => `Version: v1\n\n${body}\n\n## 变更记录\n`;
+
 export async function fixture(t, marker = "AssertionError", options = {}) {
   mkdirSync(".validation", { recursive: true });
   const dir = mkdtempSync(path.resolve(".validation/red-evidence-"));
@@ -15,13 +17,19 @@ export async function fixture(t, marker = "AssertionError", options = {}) {
   const put = (file, text) => writeFileSync(path.join(root, file), text);
   const sources = { spec: "spec.md", tickets: "tickets.md", attempts: "attempts.md" };
   for (const file of Object.values(sources)) put(file, "approved");
+  put(sources.spec, versionedSpec());
   put("implementation.cjs", options.implementation ?? "module.exports = 'old';");
   const testFile = options.testFile ?? "e2e/new-case.cjs";
   if (options.existingTest) put(testFile, options.existingTest);
   const git = (...args) => execFileSync("git", args, { cwd: root, windowsHide: true, stdio: "ignore" });
   git("init"); git("add", "spec.md", "tickets.md", "attempts.md", "implementation.cjs");
+  for (const [file, contents] of Object.entries(options.initialFiles ?? {})) {
+    put(file, contents);
+    git("add", "--", file);
+  }
   if (options.existingTest) git("add", testFile);
   git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture");
+  for (const [file, contents] of Object.entries(options.ownedDirty ?? {})) put(file, contents);
   for (let i = 0; i < (options.untrackedFiles ?? 0); i++) put(`outside-${i}.txt`, "user-owned baseline");
   const store = new Store(path.join(dir, "workflow.sqlite"));
   const wf = new Workflow(store);
@@ -51,12 +59,12 @@ export async function fixture(t, marker = "AssertionError", options = {}) {
   const plan = call("Lead", "dispatchPlan", { requirementId: requirement.id, sources, tickets: [{
     key: "NEW-TEST", developerId: roles.find(r => r.kind === "developer").id,
     title: "New test", description: "New assertion", risk: options.risk ?? "high", riskReason: "critical behavior",
-    writes: ["implementation.cjs", testFile], reads: [],
+    writes: ["implementation.cjs", testFile], reads: [], ownedDirty: Object.keys(options.ownedDirty ?? {}),
     verification: { testWrites: [testFile], checks, ...(options.browserE2E && {browserE2E:options.browserE2E}), acceptance: [{ id: "AC1", text: "new behavior" }] },
   }] });
   const taskId = plan.tasks[0].taskId;
-  const run = async (checkId, async = false, actor = "Dev") => {
-    const result = call(actor, "check", { taskId, checkId, async });
+  const run = async (checkId, async = false, actor = "Dev", targetTaskId = taskId) => {
+    const result = call(actor, "check", { taskId: targetTaskId, checkId, async });
     for (let i = 0; i < 100; i++) {
       const job = store.read().checkJobs.find(j => j.id === result.jobId);
       if (!["queued", "launching"].includes(job.state)) return job;

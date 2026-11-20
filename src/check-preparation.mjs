@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fingerprint, scopePaths, overlaps } from "./files.mjs";
+import { withBuildCache } from "./build-cache.mjs";
 
 export function preparationContract(check, writes, commandArgs) {
   const requiredArtifacts = scopePaths(check.requiredArtifacts ?? []);
@@ -16,42 +17,47 @@ export function preparationContract(check, writes, commandArgs) {
   return { requiredArtifacts: [...new Set([...requiredArtifacts, ...normalized.flatMap(step => step.outputs)])], preSteps: normalized };
 }
 
-export async function prepareCheck(root, check, { env = process.env } = {}) {
+export async function prepareCheck(root, check, { env = process.env, dataDir, projectId } = {}) {
   const started = Date.now(), steps = [];
-  try {
-  for (const step of check.preSteps ?? []) {
-    const remaining = Math.min(step.timeoutMs, check.timeoutMs - (Date.now() - started));
-    if (remaining <= 0) throw Object.assign(Error("构建前置超过检查总时限"),{timedOut:true});
-    const [program, ...args] = step.argv;
-    let executable = program === "node" ? process.execPath : program;
-    if (program === "npm") {
-      const locations = [path.dirname(process.execPath), ...(env.PATH ?? "").split(path.delimiter)];
-      const cli = locations.map(location => path.join(location, "node_modules/npm/bin/npm-cli.js")).find(existsSync);
-      if (!cli) throw Error("找不到 npm-cli.js");
-      executable = process.execPath; args.unshift(cli);
-    }
-    const stepStarted=Date.now();
-    const result = await new Promise((resolve, reject) => {
-      const child = spawn(executable, args, { cwd: root, env, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-      let output = "", timedOut = false;
-      const timer = setTimeout(() => { timedOut = true; child.kill(); }, remaining);
-      for (const stream of [child.stdout, child.stderr]) stream.on("data", chunk => { output += chunk.toString().slice(0, Math.max(0, 64000 - output.length)); });
-      child.on("error", error => { clearTimeout(timer); reject(error); });
-      child.on("close", (exitCode, signal) => { clearTimeout(timer); resolve({ argv: step.argv, exitCode, signal, timedOut, output,elapsedMs:Date.now()-stepStarted }); });
-    });
-    steps.push(result);
-    if (result.exitCode !== 0 || result.signal || result.timedOut) throw Object.assign(Error("构建前置失败，不能作为红证据"), { timedOut:result.timedOut });
-  }
-  const artifacts = (check.requiredArtifacts ?? []).map(file => {
-    if (!existsSync(path.resolve(root, file))) throw Object.assign(Error("缺少构建产物 " + file), { preparation: { steps } });
-    return { file, hash: fingerprint(root, [file]) };
+  const files = [...new Set([...(check.preSteps ?? []).flatMap(step => step.outputs), ...(check.requiredArtifacts ?? [])])];
+  const readArtifacts = () => files.map(file => {
+    if (!existsSync(path.resolve(root, file))) throw Error("缺少构建产物 " + file);
+    return { file, hash: fingerprint(root, [file], [], undefined, { eol: "raw" }) };
   });
-  return { steps, artifacts, elapsedMs: Date.now() - started };
+  async function prepare() {
+    for (const step of check.preSteps ?? []) {
+      const remaining = Math.min(step.timeoutMs, check.timeoutMs - (Date.now() - started));
+      if (remaining <= 0) throw Object.assign(Error("构建前置超过检查总时限"),{timedOut:true});
+      const [program, ...args] = step.argv;
+      let executable = program === "node" ? process.execPath : program;
+      if (program === "npm") {
+        const locations = [path.dirname(process.execPath), ...(env.PATH ?? "").split(path.delimiter)];
+        const cli = locations.map(location => path.join(location, "node_modules/npm/bin/npm-cli.js")).find(existsSync);
+        if (!cli) throw Error("找不到 npm-cli.js");
+        executable = process.execPath; args.unshift(cli);
+      }
+      const stepStarted=Date.now();
+      const result = await new Promise((resolve, reject) => {
+        const child = spawn(executable, args, { cwd: root, env, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+        let output = "", timedOut = false;
+        const timer = setTimeout(() => { timedOut = true; child.kill(); }, remaining);
+        for (const stream of [child.stdout, child.stderr]) stream.on("data", chunk => { output += chunk.toString().slice(0, Math.max(0, 64000 - output.length)); });
+        child.on("error", error => { clearTimeout(timer); reject(error); });
+        child.on("close", (exitCode, signal) => { clearTimeout(timer); resolve({ argv: step.argv, exitCode, signal, timedOut, output,elapsedMs:Date.now()-stepStarted }); });
+      });
+      steps.push(result);
+      if (result.exitCode !== 0 || result.signal || result.timedOut) throw Object.assign(Error("构建前置失败，不能作为红证据"), { timedOut:result.timedOut });
+    }
+    return { steps, artifacts: readArtifacts(), cached: false, savedMs: 0 };
+  }
+  try {
+    const result = await withBuildCache(root, check, { env, dataDir, projectId, started }, prepare, readArtifacts);
+    return { ...result, elapsedMs: Date.now() - started };
   }catch(error){
     const timedOut=Boolean(error.timedOut||steps.some(step=>step.timedOut));
-    throw Object.assign(error,{phase:'preparation',timedOut,preparation:{...error.preparation,steps,elapsedMs:Date.now()-started,timedOut}});
+    throw Object.assign(error,{phase:'preparation',timedOut,preparation:{...error.preparation,steps,cached:false,savedMs:0,elapsedMs:Date.now()-started,timedOut}});
   }
 }
 export function artifactsIntact(root, preparation) {
-  try { return (preparation?.artifacts ?? []).every(({ file, hash }) => fingerprint(root, [file]) === hash); } catch { return false; }
+  try { return (preparation?.artifacts ?? []).every(({ file, hash }) => fingerprint(root, [file], [], undefined, { eol: "raw" }) === hash); } catch { return false; }
 }

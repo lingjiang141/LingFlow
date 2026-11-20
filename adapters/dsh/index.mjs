@@ -50,14 +50,17 @@ export async function apply(ctx, config) {
       signal: AbortSignal.any([abort.signal, AbortSignal.timeout(timeoutMs)]),
     });
     const value = await response.json();
-    if (!response.ok) throw Error((value.code ? "[" + value.code + "] " : "") + (value.error || "LingFlow 请求失败") + (value.violations ? "\n" + JSON.stringify(value.violations) : ""));
+    if (!response.ok) throw Error((value.code ? "[" + value.code + "] " : "") + (value.error || "LingFlow 请求失败") + (value.violations ? "\n" + JSON.stringify(value.violations) : "") +
+      (value.nextAction ? "\n" + JSON.stringify({ nextAction: value.nextAction }) : ""));
     return value;
   };
+  const observe = createDshTelemetry(ctx);
   const relay = createRelay({
     file: path.join(config.dataDir, "dsh-admissions.json"),
     agents: ctx.agents,
     controller: ctx.sessionController,
     activeJobs: (agent) => activeDshJobs(agent, ctx),
+    observe,
     api,
     signal: abort.signal,
     ensureTools: agent => watchdog.ensure(agent),
@@ -87,7 +90,7 @@ export async function apply(ctx, config) {
     defineTool({
       name: "lingflow_team",
       description:
-        "LingFlow 快速工作流。guide 获取参数，inbox 读待办，context 读角色，inspect 读原票。主控 approve、dispatchPlan、reviseSchedule、redeliver、check、summarize。只读票可 dispatch。开发 check、report、question、yieldForSchedule，审查 review。监管用 message 转达用户消息，主控用 message 携带 replyTo 回复；inbox 收新消息，messages 查询原消息。后台作业用 checkStatus/checkEvidence，写操作使用稳定 operationId。\n最小参数形状示例（仍须满足原契约）：\n" + commandExamples,
+        "LingFlow 快速工作流。guide 获取参数，inbox 读待办，context 读角色，inspect 读原票。主控 approve、dispatchPlan、reviseSchedule、unblock、check、summarize、accept。只读票可 dispatch。开发 registerChecks（新票级选项）、check、report、question、yieldForSchedule，审查 review。主控用 message 和 roleId 向本项目成员发消息；回复引用本人收到的消息或可追溯发件人的通知。监管沿监管消息沟通。inbox 收新消息，messages 查询本人频道。后台作业用 checkStatus/checkEvidence，写操作使用稳定 operationId。\n最小参数形状示例（仍须满足原契约）：\n" + commandExamples,
       parameters: {
         command: { type: "string", required: true },
         args: { type: "json", description: "仅接受命令参数的 JSON 字符串或普通对象；嵌套负载放在 args 字段；其他形态返回 invalid-arguments-shape" },
@@ -129,7 +132,6 @@ export async function apply(ctx, config) {
       },
     }),
   ];
-  const observe = createDshTelemetry(ctx);
   const watchdog = createToolWatchdog({ ctx, definitions, bindings: async () => (await api("bindings", {})).sessions });
   const install = agent => watchdog.ensure(agent);
   ctx.on("agent/created", ({ agent }) => install(agent));
@@ -143,6 +145,7 @@ export async function apply(ctx, config) {
   health();
   let lastError = "";
   const deliveryErrors = new Set();
+  const toolHealth = new Map();
   const timer = setInterval(async () => {
     if (timer.busy) return;
     timer.busy = true;
@@ -155,11 +158,14 @@ export async function apply(ctx, config) {
         state: a.status,
         pending:
           (a.inbox?.nextTurn?.length ?? 1) + (a.inbox?.nextStep?.length ?? 1),
+        ...relay.pendingInput(a),
         jobs: activeDshJobs(a, ctx),
         telemetry: observe(a),
         toolsVersion: installedToolsVersion,
         toolsMissing: watchdog.statuses().find(status => status.sessionId === a.id)?.toolsMissing ?? [],
         toolsReinstall: repairs.find(event => event.sessionId === a.id),
+        toolHealthSupported: true,
+        toolHealthCheck: toolHealth.get(a.id),
         deliveryResults: diagnostics.filter((d) => d.id.startsWith(a.id + ":")).slice(-30)
           .map(({ id, state, reason, attempt, generation, at, outcomes }) => ({
             wakeId: id.slice(a.id.length + 1), state, reason, attempt, generation, at, outcomes,
@@ -170,6 +176,11 @@ export async function apply(ctx, config) {
           toolsReinstall: repairs.find(event => event.sessionId === status.sessionId) });
       const response = await api("heartbeat", { sessions });
       watchdog.acknowledge(repairs);
+      toolHealth.clear();
+      for (const request of response.toolHealthChecks ?? []) {
+        const agent = agents.find(agent => agent.id === request.sessionId);
+        if (agent) toolHealth.set(agent.id, { id: request.id, ok: watchdog.ensure(agent) });
+      }
       void relay.accept(response.deliveries).catch((error) => {
         if (!abort.signal.aborted && !deliveryErrors.has(error.message)) {
           if (deliveryErrors.size >= 32) deliveryErrors.clear();

@@ -186,7 +186,7 @@ test("legacy high risk delivery keeps independent review history but cannot pass
   assert.throws(() => f.call("主控", "summarize", { taskId, instructions: "打开文件检查 done" }), /没有冻结契约/);
   assert.throws(
     () => f.call("主控", "accept", { taskId, evidence: "通过" }),
-    /仅用户/,
+    /没有冻结契约/,
   );
   f.store.change((s) => { s.tasks[0].state = "trial"; }); // Previously summarized legacy ticket.
   assert.throws(() => f.call("ui", "accept", { taskId, evidence: "实际打开文件确认通过" }), /没有冻结契约/);
@@ -386,6 +386,30 @@ test("DSH wake text distinguishes dispatch, review, review outcome and rework", 
   f.call("主控", "rework", { taskId, reason: "补余额不足的回归用例" });
   assert.match(wakeFor("开发一"), /返工续接.*修复积分扣减[\s\S]*摘要：补余额不足的回归用例/);
 });
+test("a waiting candidate wakes a newly enabled reviewer immediately, unlike routine changes", (t) => {
+  const f = setup(t);
+  const [,,, reviewer, otherReviewer] = f.roles;
+  f.store.change(state => {
+    for (const kind of ["context", "patrol-resume", "dependency-ready", "check"])
+      f.wf.notice(state, reviewer.id, `${kind}:routine`, "仅账本动态");
+  });
+  assert.equal(f.heartbeat().deliveries.some(wake => wake.roleId === reviewer.id), false);
+  assert.equal(f.store.read().notices.filter(notice => notice.roleId === reviewer.id && !notice.readAt && notice.silent && !notice.actionable).length, 4);
+  for (const role of [reviewer, otherReviewer]) f.call("ui", "enable", { roleId: role.id, enabled: false });
+  const { taskId } = f.dispatch();
+  f.report(taskId);
+  assert.equal(f.store.read().tasks.find(task => task.id === taskId).state, "waiting_review");
+  f.call("ui", "enable", { roleId: reviewer.id, enabled: true, resume: true });
+  const [wake] = f.heartbeat().deliveries.filter(item => item.roleId === reviewer.id);
+  assert.equal(wake.actionable, true);
+  assert.match(wake.text, /新独立审查/);
+  assert.doesNotMatch(wake.text, /仅账本动态|本轮无责任/);
+  const inbox = f.call(reviewer.name, "inbox");
+  assert.equal(inbox.notices.find(notice => notice.key.startsWith("review:")).actionable, true);
+  assert.equal(inbox.notices.find(notice => notice.key.startsWith("resume:")).actionable, true);
+  assert.equal(inbox.notices.filter(notice => notice.silent && !notice.actionable).length, 3);
+});
+
 test("candidate input change rejects stale review and stale user acceptance", (t) => {
   const f = setup(t);
   const { taskId } = f.dispatch();
@@ -451,7 +475,7 @@ test("member prompt is delivered once per revision without changing the bound se
   assert.match(laterWake.text, /有待处理事项/);
   assert.doesNotMatch(laterWake.text, /键盘交互/);
 });
-test("each re-enable redelivers unchanged context once without duplicating the wake", (t) => {
+test("each re-enable with responsibility redelivers unchanged context once without duplicating the wake", (t) => {
   const f = setup(t);
   const roleId = f.roles[1].id;
   f.call("ui", "editRole", {
@@ -460,6 +484,8 @@ test("each re-enable redelivers unchanged context once without duplicating the w
     identityPrompt: "保留测试证据。",
   });
   const initial = f.call("开发一", "inbox").context;
+  f.dispatch();
+  f.call("开发一", "inbox");
   for (const operationId of ["open-again", "open-later"]) {
     f.call("ui", "enable", { roleId, enabled: false });
     f.call("ui", "enable", { roleId, enabled: true }, operationId);
@@ -490,6 +516,7 @@ test("startup uses role defaults, live bindings and updated personal prompts", (
     [reviewer, /每项发现写清位置、触发条件/],
   ];
   for (const [role, identity] of expected) {
+    f.store.change(s => f.wf.notice(s, role.id, `question:startup-${role.id}`, "待回答问题"));
     f.call("ui", "enable", { roleId: role.id, enabled: false });
     f.call("ui", "enable", { roleId: role.id, enabled: true });
     const [wake] = f.heartbeat().deliveries.filter((w) => w.roleId === role.id);
@@ -690,6 +717,8 @@ test("restarting and reopening replaces an abandoned wake, but keeps the origina
   const role = f.roles[1];
   const { taskId } = f.dispatch({}, "original-dispatch");
   f.call(role.name, "progress", { taskId, text: "已经检查原始输入" });
+  // Progress confirms the dispatch. Keep an independent unread input in the old wake.
+  f.call("主控", "message", { roleId: role.id, text: "继续核对原责任" });
   const original = f.heartbeat().deliveries.find((wake) => wake.roleId === role.id);
   f.wf.acknowledge(original.id, role.name);
   const persisted = new Store(path.join(path.dirname(f.root), "state.sqlite"));
@@ -728,6 +757,7 @@ test("manual continuation after cancellation recovers a read event and an unfini
   f.wf.heartbeat([{ id: lead.name, state: "idle", pending: 0, jobs: 0, telemetry: {
     state: "idle", since: at, activityAt: at, turn: { id: "cancelled", endedAt: at, outcome: "cancelled" },
   } }], at);
+  f.call(member.name, "question", { taskId, text: "新增未读问题" });
   const args = { roleId: lead.id, enabled: true, resume: true };
   assert.deepEqual(f.call("ui", "enable", args, "manual-resume"), { enabled: true, resumeStatus: "waiting-idle" });
   f.call("ui", "enable", args, "manual-resume");
@@ -741,9 +771,9 @@ test("manual continuation after cancellation recovers a read event and an unfini
   assert.equal(status(), "read");
   assert.equal(notices.filter((notice) => notice.key.startsWith("resume:")).length, 1);
   assert.equal(recovery.tasks[0].id, taskId);
-  const questionId = recovery.tasks[0].openQuestions[0];
-  assert.ok(questionId);
-  f.call(lead.name, "answer", { taskId, questionId, text: "继续原工作" });
+  assert.equal(recovery.tasks[0].openQuestions.length, 2);
+  for (const questionId of recovery.tasks[0].openQuestions)
+    f.call(lead.name, "answer", { taskId, questionId, text: "继续原工作" });
   assert.equal(f.report(taskId).state, "stored");
 });
 
@@ -788,7 +818,9 @@ test("read-only scope preview and dispatch distinguish unknown reads, real overl
   assert.deepEqual(scopeConflict, unknown);
   const diagnosis = f.call("主控", "diagnoseTask", { taskId });
   assert.equal(diagnosis.reason, unknown.message);
-  assert.equal(diagnosis.nextAction.command, "reviseSchedule");
+  assert.equal(diagnosis.nextAction, null);
+  assert.equal(diagnosis.actionRequired.command, "reviseSchedule");
+  assert.deepEqual(diagnosis.actionRequired.requiredParameters, ["reads"]);
   assert.equal(unknown.kind, "read-scope-unknown");
   assert.equal(unknown.taskId, writer);
   assert.equal(unknown.peerRole, "developer");

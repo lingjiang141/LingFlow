@@ -193,11 +193,11 @@ else {
             const feedback = () => roleCard().querySelector('.role-feedback')?.textContent;
             (await waitFor(() => button('开启角色'))).click();
             const enablePending = feedback();
-            const resumeOffline = await waitFor(() => feedback()?.includes('等原会话上线') && feedback());
+            const silentResume = await waitFor(() => feedback()?.includes('本轮无责任') && feedback());
             (await waitFor(() => button('暂停新投递'))).click();
             const pausePending = feedback();
             const paused = await waitFor(() => feedback()?.includes('已保留原任务') && feedback());
-            return { enablePending, resumeOffline, pausePending, paused };
+            return { enablePending, silentResume, pausePending, paused };
           })()
         `);
         await captureSmokePage(mainWindow, path.join(target, "desktop.png"), screenshotErrors);

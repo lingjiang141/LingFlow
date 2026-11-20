@@ -1,6 +1,8 @@
 const activityEvents = new Set([
   "turn/start",
   "turn/end",
+  "compaction/start",
+  "compaction/end",
   "step/start",
   "step/end",
   "tool/call",
@@ -77,45 +79,50 @@ function endState(reason) {
 
 export function createDshTelemetry(ctx) {
   const sessions = new WeakMap();
-  const get = (session) => {
-    if (!sessions.has(session))
-      sessions.set(session, { activityAt: 0, loaded: false });
-    return sessions.get(session);
-  };
-  function record(session, event) {
-    if (!activityEvents.has(event?.type) || !session) return;
-    const data = get(session);
+  function record(data, event) {
+    if (!activityEvents.has(event?.type)) return;
     const at = Number.isSafeInteger(event.time) ? event.time : Date.now();
     data.activityAt = Math.max(at, data.activityAt);
-    if (event.type !== "turn/start" && event.type !== "turn/end") return;
-    if (at < (data.lifecycleAt ?? 0)) return;
-    data.lifecycleAt = at;
-    if (event.type === "turn/start") {
-      data.turn = { id: String(event.seq ?? at) + ":" + at, startedAt: at };
-    } else if (event.type === "turn/end") {
+    const [kind, edge] = event.type.split("/");
+    if (kind !== "turn" && kind !== "compaction") return;
+    const previous = data.lifecycle[kind];
+    const seq = Number.isSafeInteger(event.seq) ? event.seq : null;
+    if (previous && (seq !== null && previous.seq !== null ? seq <= previous.seq : at < previous.at)) return;
+    const turn = event.data?.turn;
+    if (edge === "end" && previous?.open && previous.turn != null && turn != null && previous.turn !== turn) return;
+    data.lifecycle[kind] = { at, seq, turn, open: edge === "start" };
+    if (kind === "compaction") return;
+    if (edge === "start") {
+      data.turn = { id: String(seq ?? at) + ":" + at, startedAt: at };
+    } else {
       data.turn = {
-        ...(data.turn ?? { id: "end:" + (event.seq ?? at) }),
+        ...(data.turn ?? { id: "end:" + (seq ?? at) }),
         endedAt: at,
         ...endState(event.data?.reason),
       };
     }
   }
-  ctx.on("session/event", record);
+  const get = (session) => {
+    if (sessions.has(session)) return sessions.get(session);
+    const data = { activityAt: 0, lifecycle: {} };
+    sessions.set(session, data);
+    try {
+      // An open turn or compaction can start well before the recent activity window.
+      for (const event of session.snapshotEvents()) record(data, event);
+    } catch {
+      // Live events still track sessions whose history is unavailable.
+    }
+    return data;
+  };
+  ctx.on("session/event", (session, event) => {
+    if (session && activityEvents.has(event?.type)) record(get(session), event);
+  });
   ctx.on("agent/assistant-stream", ({ agent }) => {
     if (agent?.session) get(agent.session).activityAt = Date.now();
   });
   return function observe(agent) {
     if (!agent.session) return { activityAt: 0 };
     const data = get(agent.session);
-    if (!data.loaded) {
-      data.loaded = true;
-      try {
-        for (const event of agent.session.snapshotEvents().slice(-200))
-          record(agent.session, event);
-      } catch {
-        // Live host status remains available when the event history is not.
-      }
-    }
-    return { activityAt: data.activityAt, turn: data.turn };
+    return { activityAt: data.activityAt, turn: data.turn, compacting: data.lifecycle.compaction?.open === true };
   };
 }

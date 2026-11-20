@@ -6,6 +6,7 @@ const defaults = Object.freeze([
   "/.hive/handoffs/**/gate-cache-*.json", "/.hive/handoffs/**/bundle-cache-*.json",
   "/.hive/handoffs/**/plans/*.json", "/.hive/jobs/",
   "/.hive/handoffs/**/implementation.json",
+  "/.scratch/", "/logs/", "**/dist.bak-*/",
 ]);
 
 function compile(pattern) {

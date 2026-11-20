@@ -20,6 +20,7 @@ test("resumeTask retains original evidence, waits for fresh idle heartbeat and r
   assert.equal(result.state,"stored");
   assert.equal(f.store.read().tasks[0].state,"queued");
   assert.deepEqual(f.store.read().tasks[0].baseline,old.baseline);
+  assert.deepEqual(f.store.read().tasks[0].scheduleHistory.at(-1).previous.writes,old.writes);
   assert.deepEqual(f.call("Lead","resumeTask",args,"resume-one"),result);
   f.wf.heartbeat(f.roles.map(role=>({id:role.name,state:role.kind==="developer"?"running":"idle",pending:0,jobs:0})));
   assert.equal(f.store.read().tasks[0].state,"queued");
@@ -46,9 +47,10 @@ test("wake acknowledgement marks actual recipient, later wake is compact",async 
   f.wf.acknowledge(wake.id,"Lead");
   const role=f.store.read().roles.find(role=>role.kind==="controller");
   assert.equal(role.seenContextRevision,1);
-  const compact=wakeText(f.store.read().projects[0],role,true,"one");
+  const state=f.store.read();
+  const compact=wakeText(state.projects[0],role,true,"one",state);
   assert.ok(compact.length<800);assert.doesNotMatch(compact,/角色身份/);
-  const changed=wakeText(f.store.read().projects[0],role,true,"two");
+  const changed=wakeText(state.projects[0],role,true,"two",state);
   assert.equal(compact.slice(0,compact.indexOf("当前事项")),changed.slice(0,changed.indexOf("当前事项")));
 });
 
@@ -85,12 +87,29 @@ test("same-name roles merge only when identity matches and no history references
   assert.equal(state.roles[2].archivedAt,undefined);assert.equal(state.roleDuplicateDiagnostics[1].state,"needs-review");
 });
 
-test("message errors distinguish member target, missing reply and wrong message id",async t=>{
+test("controller direct messages reach the member and replies stay in the same project channel",async t=>{
   const f=await fixture(t);
+  const member=f.roles.find(role=>role.kind==="developer");
+  const lead=f.roles.find(role=>role.kind==="controller");
+  const sent=f.call("Lead","message",{roleId:member.id,text:"请核对原票的现场信息"},"direct-note");
+  assert.equal(sent.state,"stored");
+  assert.deepEqual(f.call("Lead","message",{roleId:member.id,text:"请核对原票的现场信息"},"direct-note"),sent);
+  const inbox=f.call("Dev","inbox");
+  assert.equal(inbox.messages.find(message=>message.id===sent.messageId).text,"请核对原票的现场信息");
+  const notification=inbox.notices.find(notice=>notice.key==="message:"+sent.messageId);
+  assert.ok(notification);
+  assert.equal(f.call("Dev","messages",{messageId:sent.messageId}).from,lead.id);
+  const reply=f.call("Dev","message",{roleId:lead.id,replyTo:sent.messageId,text:"已核对"});
+  assert.equal(f.call("Lead","messages",{messageId:reply.messageId}).replyTo,sent.messageId);
+  const viaNotice = f.call("Dev","message",{replyTo:notification.id,text:"reply"});
+  assert.equal(f.call("Lead", "messages", { messageId: viaNotice.messageId }).replyToKind, "notice");
+  assert.throws(()=>f.call("Dev","message",{roleId:lead.id,text:"unlinked"}),/replyTo/);
+  assert.throws(()=>f.call("Review","message",{replyTo:sent.messageId,text:"unrelated"}),/本角色收到/);
+  f.store.change(s=>s.roles.push({...member,id:"foreign-role",projectId:"other-project"}));
+  assert.throws(()=>f.call("Lead","message",{roleId:"foreign-role",text:"cross project"}),/同项目 roleId/);
   for(const [args,pattern] of [
-    [{roleId:f.roles.find(role=>role.kind==="developer").id,text:"resume"},/resumeTask/],
     [{text:"reply"},/replyTo/],
-    [{replyTo:"notification-id",text:"reply"},/通知 id/],
+    [{replyTo:"notification-id",text:"reply"},/本角色收到/],
     [{roleId:"missing-role",text:"reply"},/roleId/],
   ])assert.throws(()=>f.call("Lead","message",args),pattern);
 });
@@ -119,5 +138,17 @@ test("real check worker refuses missing build products and records successful pr
   assert.equal(red.receipt.preparation.steps[0].exitCode,0);assert.equal(red.receipt.preparation.artifacts.length,1);
   f.put("implementation.cjs","module.exports='new';");
   assert.equal((await f.run("green")).state,"passed");
-  assert.equal((await f.run("full")).state,"passed", "New build products must not invalidate historical baseline red");
+  const full = await f.run("full");
+  assert.equal(full.state,"passed", "New build products must not invalidate historical baseline red");
+  const evidence = f.call("Dev", "checkEvidence", { jobId: full.id });
+  assert.equal(evidence.receipt.preparation.cached, true);
+  assert.ok(evidence.receipt.preparation.savedMs > 0);
+  assert.equal(f.call("Dev", "checkStatus", { taskId: f.taskId }).find(job => job.id === full.id).receipt.preparation.cached, true);
+  const valid = () => {
+    const state = f.store.read(), task = state.tasks[0];
+    return f.wf.validCheck(state, task, task.verification.checks.find(check => check.id === "full"));
+  };
+  assert.ok(valid());
+  f.put("apps/web/dist/app.js", "tampered after build cache hit");
+  assert.equal(Boolean(valid()), false);
 });

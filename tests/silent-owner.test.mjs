@@ -55,13 +55,10 @@ test("unknown telemetry, stale heartbeat and a live turn never become a silent o
 
 test("recovered ticket still fails normal admission when baseline drifted",async t=>{
   const f=await fixture(t);f.store.change(s=>{s.tasks[0].deliveredAt=Date.now();});
-  f.put("unrelated.txt","new commit");f.git("add","unrelated.txt");
+  f.put("implementation.cjs","module.exports = 'in-flight commit';");f.git("add","implementation.cjs");
   f.git("-c","user.name=Fixture","-c","user.email=fixture@example.invalid","commit","-m","drift");
-  f.call("Lead","resumeTask",{taskId:f.taskId,reason:"recover"});
-  const deliveries=f.wf.heartbeat(f.roles.map(r=>({id:r.name,state:"idle",pending:0,jobs:0}))).deliveries;
-  assert.equal(f.store.read().tasks[0].state,"queued");
-  assert.equal(deliveries.some(w=>w.sessionId==="Dev"&&w.noticeIds.some(id=>f.store.read().notices.find(n=>n.id===id)?.key.startsWith("dispatch:"))),false);
-  assert.match(f.store.read().tasks[0].waitReason,/HEAD|暂存|基线/);
+  assert.throws(() => f.call("Lead","resumeTask",{taskId:f.taskId,reason:"recover"}), /冻结范围.*implementation/);
+  assert.equal(f.store.read().tasks[0].state,"assigned");
 });
 
 test("inspect bounds a large baseline, with explicit paging and no persisted truncation",async t=>{

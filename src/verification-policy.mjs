@@ -1,8 +1,11 @@
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 
-export const CONTROLLER_CHECK_BOUNDARY = "主控负责用户沟通、规划、派发与验收裁决。主控不得写业务代码；不得执行 red / green / full / regression 检查，不得执行 e2e，不得执行 npm run build 等构建。主控唯一允许执行的是冻结的 independent / controller 短探针（最多 60000ms），且必须经 check 命令提交，不允许在主控 shell 里直接跑完再自称已验。详细独立审查交给审查成员，共同累计检查由 LingFlow 后台执行。怀疑证据时不得自行执行该检查；把票连同证据清单回投责任人（rework + evidence，或 diagnoseTask 给出的 ownerRole=developer 的命令）。主控只在 ownerRole=controller 的冻结探针上执行命令。";
-export const CONTROLLER_WAKE_BOUNDARY = '主控不得写业务代码或跑 red/green/full/regression/e2e/build；仅经 check 提交≤60000ms 的独立短探针（ownerRole=controller）。缺证用 rework+evidence 回投原开发者；完整红线见 guide {topic:"controller"}。';
+const CONTROLLER_IMPLEMENTATION_BOUNDARY = "主控不得写业务代码或亲自实现、修复、返工。代码、测试及实现所需的配置改动由责任开发执行，主控不得通过编辑器、shell 或其他工具代做。";
+export const CONTROLLER_CHECK_BOUNDARY = "主控负责用户沟通、规划、派发与验收裁决。此职责边界在整个项目推进中持续有效，角色身份和自定义工作方式须遵守。"
+  + CONTROLLER_IMPLEMENTATION_BOUNDARY
+  + "缺陷有原票时沿原票回投责任开发，无原票时按用户授权派单；主控可只读核对差异和证据。不得执行 red / green / full / regression 检查、e2e 或构建。仅通过 check 提交冻结的 independent / controller 短探针（最多 60000ms）。详细独立审查交给审查成员，累计检查由 LingFlow 后台执行。缺少开发证据时用 rework + evidence 回投责任开发。";
+export const CONTROLLER_WAKE_BOUNDARY = "主控不得写业务代码、亲自实现或修复，也不得代跑开发检查。缺陷沿原票回投责任开发；新增工作经用户授权派单。缺证用 rework+evidence，仅经 check 提交冻结的独立短探针（≤60000ms）。";
 
 const developerStages = new Set(["red", "green", "full"]);
 export const browserStageRules = Object.fromEntries([
@@ -119,19 +122,20 @@ function browserBindingIssues(check, cases) {
     remedy: "先补齐或修正票根或 verification.browserE2E 的 file、title、reason 和 covers，再核对命令。" }];
   const matched = cases.filter(entry => sameArgv(check.argv, browserCheckArgv(entry)));
   if (!matched.length) {
-    const expectedEntry = cases.find(entry => normalizeBrowserArgv(check.argv)[3] === normalizeBrowserArgv(browserCheckArgv(entry))[3]) ??
-      cases.find(entry => check.inputs.includes(entry.file)) ?? cases[0];
+    const targeted = cases.filter(entry => normalizeBrowserArgv(check.argv)[3] === normalizeBrowserArgv(browserCheckArgv(entry))[3]);
+    const candidates = (targeted.length ? targeted : cases).filter(entry => check.inputs.includes(entry.file) && coversCase(check, entry));
+    const expectedEntry = candidates[0] ?? targeted[0] ?? cases[0];
     const expected = browserCheckArgv(expectedEntry);
-    return [{ field: "argv", expected,
+    return [{ field: "argv", expected, ...(candidates.length === 1 && { replacement: expected }),
       message: `检查 ${check.id}：浏览器命令必须绑定一个声明的文件和标题；不接受全套、额外参数或间接浏览器脚本。收到 argv=${JSON.stringify(receivedArgv.get(check) ?? check.argv)}；期望 argv=${JSON.stringify(expected)}`,
       remedy: "复制对应 browserE2E 文件和完整标题生成的 expected argv；不要修改 covers 来掩盖命令差异。" }];
   }
   const entry = matched[0];
   const issues = [];
-  if (!check.inputs.includes(entry.file)) issues.push({ field: "inputs", expected: [...new Set([...check.inputs, entry.file])],
+  if (!check.inputs.includes(entry.file)) issues.push({ field: "inputs", expected: [...new Set([...check.inputs, entry.file])], replacement: [...new Set([...check.inputs, entry.file])],
     message: `检查 ${check.id}：inputs 未冻结浏览器文件。收到 inputs=${JSON.stringify(check.inputs)}；必须包含=${JSON.stringify(entry.file)}`,
     remedy: "将声明的浏览器文件加入本检查 inputs，保留其余实际依赖。" });
-  if (!coversCase(check, entry)) issues.push({ field: "covers", expected: [...new Set([...check.covers, ...entry.covers])],
+  if (!coversCase(check, entry)) issues.push({ field: "covers", expected: [...new Set([...check.covers, ...entry.covers])], replacement: [...new Set([...check.covers, ...entry.covers])],
     message: `检查 ${check.id}：covers 不一致，必须覆盖对应 AC（包含 browserE2E.covers，可额外覆盖本票 AC）。收到 check.covers=${JSON.stringify(check.covers)}；browserE2E.covers=${JSON.stringify(entry.covers)}`,
     remedy: "核对用例确实证明哪些 AC；在红绿同键约束下对齐 covers 与 browserE2E.covers，不要改 argv。" });
   return issues;
@@ -209,7 +213,7 @@ export function alignBrowserArgv(checks, cases, warnings, prefix, rawChecks = ch
   }
 }
 
-export function freezeBrowserChecks(root, entries, checks, testWrites, acIds, collect) {
+export function freezeBrowserChecks(root, entries, checks, testWrites, acIds, collect, developerChecksPending = false) {
   const valid = [];
   const emit = collect ?? ((_path, message) => invalid(message));
   const report = (suffix, message, entry) => emit(".browserE2E" + suffix, message,
@@ -223,19 +227,21 @@ export function freezeBrowserChecks(root, entries, checks, testWrites, acIds, co
         typeof entry.reason !== "string" || !entry.reason.trim() || entry.reason.length > 8000 || !Array.isArray(entry.covers) || !entry.covers.length || new Set(entry.covers).size !== entry.covers.length || !entry.covers.every((ac) => acIds.has(ac))) {
       report("["+index+"]", "浏览器用例格式无效或重复：填写 {file,title,reason,covers}，说明为何必须通过浏览器验证并引用已有 AC"); continue;
     }
-    if (!checks.some((check) => check.inputs.includes(entry.file))) {
+    if (!(developerChecksPending ? testWrites.includes(entry.file) : checks.some((check) => check.inputs.includes(entry.file)))) {
       report("["+index+"]", entry.file+" 必须是检查 inputs 中冻结的项目相对文件"); continue;
     }
     seen.add(id);
     valid.push({ file: entry.file, title: entry.title, reason: entry.reason.trim(), covers: entry.covers });
   }
+  if (developerChecksPending) return valid;
   const files = new Set([...testWrites, ...checks.filter((c)=>c.stage!=="regression").flatMap((c)=>c.inputs)].filter((file)=>browserSpec(root,file)));
   for(const file of files) if(!valid.some((c)=>c.file===file)) report("", "浏览器测试文件 "+file+" 缺少 verification.browserE2E（也可放票根）", {file,title:"literal case title",reason:"why browser is required",covers:[...acIds].slice(0,1)});
   for(const check of checks) {
     if(!developerStages.has(check.stage))continue;
     const browser = [...check.argv, ...npmScripts(root, check.argv)].some(value => browserRunner.test(value));
     if (browser) for (const issue of browserBindingIssues(check, valid))
-      emit(issue.field === "browserE2E" ? ".browserE2E" : ".checks."+check.id+"."+issue.field, issue.message, issue.expected, issue.remedy);
+      emit(issue.field === "browserE2E" ? ".browserE2E" : ".checks."+check.id+"."+issue.field, issue.message, issue.expected, issue.remedy,
+        issue.replacement === undefined ? undefined : { checkId: check.id, field: issue.field, value: issue.replacement });
   }
   for(const entry of valid) if(!checks.some((c)=>c.stage==="full"&&binds(c,entry))) report("", "浏览器用例 "+entry.file+" · "+entry.title+" 缺少开发 full 检查", {stage:"full",argv:browserCheckArgv(entry),inputs:[entry.file],covers:entry.covers});
   return valid;

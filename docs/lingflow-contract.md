@@ -2,6 +2,41 @@
 
 `lingflow_team` 的 `schema {"command":"dispatchPlan"}` 返回字段示例。`previewPlan` 使用与 `dispatchPlan` 同一组规则；通过时返回 `state:"valid"`、`violations:[]`、`warnings` 和归并后的范围及检查。无效时预检返回 `state:"invalid"`，每条违规含 `path`、`message`、`expected`、`remedy`。正式派发遇到违规会拒绝，原票和投递队列保持不变。
 
+## 派发、恢复与验收
+
+- `after` 只声明确需等待的 `verified` 或 `accepted` 门槛。已入库的代码依赖记录 SHA 并声明真实 `reads`。端口、数据库和环境互斥写进 `resources`。预检会提示已经核实入库的前置，原依赖门继续生效。
+- 同分支的安全快进可以更新审计基线。准入时明确承接的脏文件仍属于本票冻结写集。与冻结范围无交集、已提交且工作树干净的票外旧脏文件可以自动出列，审计为 `baseline-other-pruned`。冻结路径暂存、非快进和未知归属继续拦截。
+- 开发检查回执复用要核对冻结配方、同内容输入、产物和完整日志。red 及 regression 不得用作 AC 验收证据。独立探针按相同规则复用。显式要求重跑或口径切换会单独标记对应旧回执失效。
+- `diagnoseTask` 在状态副本上执行建议的恢复命令，回传实际阻碍。主控可调用 `unblock {taskId,reason}` 执行可自动完成的一步。提交归属核对须按回执单独确认。
+- 普通提问和定向消息用 `question` 和 `message`。显式 `blocking:true` 只拦该角色的阶段。主控答复后可沿原票恢复，`resume:false` 可保留暂停。试用期间只推送真实的新责任或定向沟通。唤醒未读分别等候 120、240、480 秒。达到上限后，工具可用且原会话确认空闲时自动续接一次。主控可执行 `rearmWake {roleId,reason}`，成员面板也提供「恢复未读投递」。原通知可继续从原会话的 `inbox` 读取。
+- 试用仍以用户结论为准。工作台和主控可以用 `accept {taskId,evidence}` 记录真实试用结果，回执保存验收角色、候选及时间。规划版本变化写入交付与汇总回执，原票沿用派发时的 AC。
+
+新实施票使用 `candidateScope:2`。候选指纹覆盖冻结的 `writes` 和 `testWrites`，成功交付时保存完整路径快照。`reads` 和检查输入继续参与各自检查的有效性核对。其他票提交共享检查输入时，`diagnoseTask` 会指出需要重跑的检查。旧票保留原指纹口径和现有历史。
+
+后续提交覆盖已验证票的写集时，如果原分支历史能完整重建原交付，且写集工作树与当前提交一致，主控仍可核对原交付并记录用户验收。`diagnoseTask` 显示 `historicalCommit`，证据查询和验收回执显示 `deliveryCommit`。差异取自该提交，历史检查回执对应原交付时的输入。缺少等价提交、回执失效或写集有未提交变化时，须先处理诊断给出的阻碍。
+
+## 活规格与冻结票面
+
+票在飞时，主控可以及时更新 `spec.md`。新计划必须在文档头部写 `Version: vN` 或 `Version: N`，并包含 `## 变更记录`。修订时递增版本并追加一行。协调事项可随时更新到 `planned-attempts.md`。
+
+| 日期 | 版本 | 改了什么 | 影响 AC | 影响在飞票 |
+| --- | --- | --- | --- | --- |
+| 2026-11-19 | v2 | 修订评分描述 | AC-3 | R1-02 |
+
+联动使用「影响 AC」和「影响在飞票」列中的编号。可填写多个以逗号、顿号或空格分隔的编号，无影响填 `—`。票的 AC 引用来自派发契约和票面明确声明的 `covers: AC-3`。命中后，`diagnoseTask`、`report` 与主控收件箱提供受影响票号和三种操作。主控可以保持冻结口径、追加新票，或停写后作废重派。
+
+派发时保存 spec 的版本、正文和原始字节摘要。没有版本的旧票用摘要审计，历史票的版本不会回填。`report` 和 `diagnoseTask` 的 `sourceNotes` 保留前后摘要，验收摘要显示派发时与当前的 spec 版本。`inspectPlan {planId,document:"spec"}` 返回派发正文、当前摘要以及变化起始行和片段。只供背景阅读的规划路径应放在 `contextReads`，避免被列为候选、脚本或检查的实际证据输入。
+
+禁止直接编辑在飞票面的 AC、写集和检查。票面按派发时的字节冻结，新增事项使用独立的新票面文件。写集需要调整时，恢复冻结票面，责任人停写后由主控执行 `reviseSchedule {taskId,reason,writes:[...]}`。AC 或检查契约需要改变时，用新票面先做 `previewPlan`，再走旧票作废与重派。原契约内的开发检查配方修订继续走下文的 `allowCheckRevision` 流程。
+
+票面已被改写时，主控可以核对 `diagnoseTask` 给出的当前原始字节摘要，并执行返回的 `reviseSchedule {refreshSourceDigest:true,expectedSourceDigest,...}` 接续原票。确认只记录该版本的来源复核，原派发 AC、检查及已有交付证据继续生效。
+
+## DSH 队列与投递恢复
+
+`message` 先写入 LingFlow 收件箱，由空闲心跳送出提示。开工必读事项写入原票的 `brief`、`boundaries` 或 `stopConditions`，可独立处理的信息用 `message`，允许先发消息再派票。原绑定会话空闲且无后台作业时，桥接可将已确认的 LingFlow 排队提示同新票一起唤醒。成员从同一轮的 `inbox` 读取原消息与票据。空闲心跳也可恢复重连前已排队的唤醒。
+
+`list` 角色卡显示 `pendingInputCount`、`lastTurnState` 和阻塞原因。DSH 空闲且无作业时可唤醒 LingFlow 输入，其他可识别输入在同一快照空闲满 6 秒后自动续接。待投递原票可随同一次唤醒送达。需要立刻续接时，复制 `redeliver {taskId}` 的 `unblock` 参数。确认误投时，复制同一回执的 `dropAction`，结果从 `list` 的 `lastInputDrop` 查阅。详细迁移步骤见 [MIGRATION.md](../MIGRATION.md)。
+
 ## 工具时限和归属扫描
 
 在 LingFlow 数据目录的 `config.json` 中，保留现有字段并加入 `execution`。按项目 ID 覆盖的值优先。修改后重启服务，DSH 适配器会从服务读取对应会话的时限。
@@ -23,9 +58,19 @@
 
 `error:"timeout"` 包含阶段、耗时和已知的扫描数量。写操作用原 `operationId` 查回执，并用相同参数和编号重试。慢证据查询可返回原票记录和 `evidence.available:false`。作业记录的 `source` 区分 DSH 工具适配器和 HTTP 直连。
 
-默认扫描 Git 跟踪的脏文件、票面写集和可见的未跟踪文件。归属扫描从未跟踪路径中过滤生成物，票面声明的路径仍进入检查。在 `execution.ownershipIgnores` 或 `execution.projects.<项目 ID>.ownershipIgnores` 中可用相对路径、`*` 和 `**/` 替换默认列表。`[]` 可关闭 LingFlow 的过滤，Git 自身忽略规则继续生效。`LingFlow ownership scan` 记录已核算指纹的文件数、缓存命中、Git 枚举与指纹耗时。`LingFlow ownership inventory` 在后台记录 Git 可见未跟踪总数和该次采样的忽略数量。
+默认扫描 Git 跟踪的脏文件、票面写集和可见的未跟踪文件。归属扫描从未跟踪路径中过滤生成物，票面声明的路径仍进入检查。在 `execution.ownershipIgnores` 或 `execution.projects.<项目 ID>.ownershipIgnores` 中可用相对路径、`*` 和 `**/` 整体替换默认列表，不与默认规则合并。项目配置优先。`[]` 可关闭 LingFlow 的过滤，Git 自身忽略规则继续生效。`LingFlow ownership scan` 记录已核算指纹的文件数、缓存命中、Git 枚举与指纹耗时。`LingFlow ownership inventory` 在后台记录 Git 可见未跟踪总数、忽略数量和生效规则数 `patterns`。
 
-默认过滤包括 `node_modules`、各层 `dist`、`.git` 和 `.hive/build-cache`。重绑结果的 `scannedFiles` 表示归属核算涉及的范围外脏文件数，包含缓存命中，不是整个仓库文件数；票面写集与冻结输入另行校验，已跟踪文件不会因噪声过滤而被隐藏。超时回执采用最近收到的扫描进度。
+默认过滤包括 `node_modules`、各层 `dist`、`.git`、`.hive/build-cache`、根目录的 `.scratch/` 和 `logs/`，以及 `**/dist.bak-*/`。需要核对这些目录内的文件时，在原票的 `writes` 或 `sources` 中显式声明。重绑结果的 `scannedFiles` 表示归属核算涉及的范围外脏文件数，包含缓存命中，不是整个仓库文件数；票面写集与冻结输入另行校验，已跟踪文件不会因噪声过滤而被隐藏。超时回执采用最近收到的扫描进度。
+
+归属诊断中的 `ownershipIgnoreDetails` 显示归属过滤排除的路径和已声明、仍需扫描的 Git 忽略路径。并行票的归属有疑问时，先用 `diagnoseTask` 核对 `outsideOwnership`。主控停写后通过 `reviseSchedule` 带 `expectedHead` 和 `confirmForeignDirty` 确认具体文件、责任票 ID 及原始 SHA-256。文件再次变化会重新触发核对。
+
+红阶段按准入时的实现文件指纹核对（`writes` 排除 `testWrites`）。`LINGFLOW_FINGERPRINT_EOL=normalize` 是默认值，只把 CRLF 变为 LF；`raw` 比较原始字节。测试、规划文档和产物证据仍按原始字节核对。未记录口径的旧基线或运行口径变化，不复用旧证据；由主控在停写后恢复并核对原实现，再用 `reviseSchedule {refreshBaseline:true}` 明确续接。
+
+变更 `writes` 时按现行写集从可验证的原取红快照重算指纹，文件缺席也进入指纹。写集或读集调整会使原检查回执失效。无法核验原快照时，旧指纹保留在审计中，票据提示取红基线待确认。主控可停写后显式指定 `reviseSchedule {taskId,refreshBaseline:true,expectedHead,redBaselineHead,reason}`，其中两个提交参数均为当前 HEAD，原分支、干净暂存区与 HEAD 一致的实现范围须通过校验。随后仍由责任开发运行原票 red，取得真实断言失败。若原取红状态已不可恢复，可在主控确认归属后登记后继票。
+
+`pruneOutside:true` 可单独用于持有冻结基线的排队、暂停、试用或执行中票。结合 `refreshBaseline:true` 时须满足刷新门槛。`prunedOutside:[]` 和 `pruneOutsideReason` 表示当前没有可证明已提交且已收口的票外基线条目。
+
+在途期间不自行提交。成员用 `describeDrift` 核对提交差异，用 `report outcome=blocked` 交主控；不能自行重绑。主控显式重绑后，失效的红证据必须从原取红实现重跑，再检验新 HEAD 下的绿和完整检查。恢复原实现只操作冻结写集，不回退 Git HEAD。成员可用 `proposeOwnedDirty` 提报写集路径与原始字节 SHA-256；主控须用 `reviseSchedule` 的 `confirmOwnedDirty` 精确确认或 `rejectOwnedDirty:true` 拒绝。
 
 ## 新增测试与红证据
 
@@ -70,14 +115,28 @@ previewPlan 对有 preSteps 且总 timeoutMs<300000 的检查给出“构建前�
 | 字段 | 用法 |
 | --- | --- |
 | `requirementId` | 主控已登记的用户授权；读取 Hive 文档不等于执行授权。 |
-| `sources.spec` / `sources.attempts` | 项目相对路径，分别指向规格和预定路线。 |
+| `sources.spec` / `sources.attempts` | 项目相对路径，分别指向规格和本轮跨票协调记录。没有额外协调可用一行非空说明。票内路线由责任开发在准入后决定。 |
 | `sources.tickets` / `sources.ticketsDir` | 三选一：聚合票面路径、原票文件路径数组、包含原票 Markdown 的目录。多文件以 H1 票号定位；旧的 `lingflow-contract` 仍支持。 |
 | `tickets[].key` / `developerId` | 稳定票号和本项目开发成员 ID。 |
 | `writes` / `reads` | 显式项目相对路径；缺省或 `"from-ticket"` 可从 Hive 归属段派生。实施票空写集也尝试派生。歧义路径由主控补足；条件写入不自动纳入。背景阅读单列 `contextReads`。 |
-| `after`、`resources` | 前置门槛与共享资源。Hive 的「前置」可派生成 verified；若必须等业务验收，用 accepted 显式声明。共享端口、数据库等资源必须如实声明。 |
+| `after`、`resources` | 省略 `after` 时从票面派生 verified；显式数组（包括 `[]`）为准，未采用的票面前置记 warning。若必须等业务验收，用 accepted 显式声明。共享端口、数据库等资源必须如实声明。 |
 | `verification.acceptance` / `testWrites` | 原票 AC 和允许写入的行为测试文件，可从已识别票面派生。测试路径仍须属于 writes；已有测试满足验证需求时，内容可以与基线完全一致，不强制修改。 |
 | `verification.browserE2E` | 具名浏览器证据：`{file,title,reason,covers}`；也接受票根声明，不能两处冲突。兼容 Hive 票面显式用例标题与能唯一定位它的票号筛选。 |
-| `verification.checks` | 实际可执行的 `argv`、冻结 `inputs`、`covers`、退出和断言规则。票面用自然语言描述验证时，主控提供真正可运行的检查，不由程序猜命令、失败原因或覆盖证据。 |
+| `verification.checks` | 新工单可在 `lingflow-checks` JSON 围栏填 `checks` 与 `browserE2E`，省略内联 verification。票面 AC 正文和 `lingflow-contract` 补足验收/测试写集。显式 verification 优先且有 warning，仍须满足契约。 |
+
+`schema {command:"dispatchPlan",requirementId,spec,ticketsDir,attempts,developerIds?}` 用正式预检生成 `args` 与检查摘要。同一目录含旧票时，用 `tickets:[本轮票面路径]` 代替 `ticketsDir`。`state=valid` 的参数可原样派发；调整过的参数可用 `previewPlan` 检查。具名浏览器选择器可按 `violations[].repair` 修正，`requiresInput` 表示须核实实际用例、路径或检查配方。
+
+参数生成优先推荐当前可接票的开发，显式 `developerIds` 优先。预检和派发可返回 `shared-resource-missing` 或 `dependency-shared-resource`，提示核对票面共享端口、派发资源及真实前置。依赖边和资源由主控确认。
+
+如开发需要读实现才能定检查，在票面的 `lingflow-contract` 加 `developerChecks:true`。派发时保留全部 AC、`testWrites`、读写边界与资源，免审票仍由主控冻结独立探针。责任开发准入后先保持原实现，用 `registerChecks {taskId,checks,browserE2E?,resources?}` 登记真实红绿和完整检查。输入、构建产物与声明资源必须在批准范围内，扩围先交主控。通过登记后仍需取得真实红绿和候选检查证据。
+
+修订冻结配方时，责任开发先 `yieldForSchedule`，主控再 `reviseSchedule {taskId,allowCheckRevision:true,reason}` 授权当前版本。责任开发用 `registerChecks {taskId,replace:true,reason,checks}` 登记完整的新配方。保留旧回执和版本审计，配方变化或被移除的检查回执失效。红配方变化时须恢复原取红实现，未变化且有效的红证据可继续使用。新配方继续覆盖冻结的 AC、`testWrites` 和独立探针。单次检查可在配方中声明 `resources`，持有资源的检查结束后释放，设备、端口和共享产物的冲突按作业协调。
+
+开发检查尚待首次登记时，同一授权流程允许已停写的原开发完成登记。准备阶段超时且原票有可复用的等价检查历史时，诊断优先给出带 `preparationJobId` 的授权命令。其回执提供只调整超时预算的 `registerChecks` 参数。直接向 `reviseSchedule` 传 `verification` 会返回 `unsupported`。
+
+`inspect`、`diagnoseTask` 与工作台票详情展示 `waitTimings`。前置、资源／范围及成员计时采用队列中程序实际观察的首要阻塞，`checkQueueMs` 按作业汇总，可与其他作业重叠。
+
+`insertSchedule {taskId,after,reason}` 只修改 queued 票的依赖和调度版本，保留源文件、写集和已有基线。需要移除前置时确认业务不再依赖该结果；保留的 verified 边不能绕过证据门槛。已确认静默的 assigned 票可限量调整读集/前置或释放，正在运行、遥测不明、有排队输入或未完检查时不允许。
 
 简例：原票已有 `AC-1`、写集和测试归属，主控提交下面的结构，不必改 Markdown：
 

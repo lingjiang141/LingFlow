@@ -1,10 +1,11 @@
-import { overlaps } from "./files.mjs";
+import { assertPaths, coversPath, overlaps } from "./files.mjs";
 import { execFileSync } from "node:child_process";
 import { gitCommandTimeout } from "./execution-policy.mjs";
 
 const stoppedStates = new Set(["paused", "blocked"]);
 const waitingStates = new Set(["queued", ...stoppedStates]);
 const activeJobs = new Set(["queued", "launching", "uncertain"]);
+const stoppedTrial = task => task.state === "trial" && task.assignee == null;
 const requireValue = (value, message) => {
   if (!value) throw Object.assign(Error(message), { verificationCode: "contract-invalid" });
 };
@@ -44,18 +45,20 @@ export function includeIgnoredScopeWrites(root, task, git) {
   return { ...git, dirty: [...new Set([...git.dirty, ...ignored])] };
 }
 
-export function assertStoppedTask(state, task) {
+export function assertStoppedTask(state, task, { allowTrial = false } = {}) {
   requireValue(!releasedTaskScope(task),'该票已释放，请登记承接票；不能再次释放旧范围或接管后继票的改动。');
-  requireValue(stoppedStates.has(task.state)||undeliveredQueuedTask(state,task), `原票 state=${task.state}，已投递或无法证明当前责任未投递且成员已停写，必须先由责任成员用 yieldForSchedule 交回 paused；主控不能终止 active 工作。`);
+  requireValue(stoppedStates.has(task.state) || undeliveredQueuedTask(state, task) || allowTrial && stoppedTrial(task),
+    `原票 state=${task.state}，已投递或无法证明当前责任未投递且成员已停写，必须先由责任成员用 yieldForSchedule 交回 paused；主控不能终止 active 工作。`);
   requireValue(!state.checkJobs.some(job => activeJobs.has(job.state) &&
     (job.taskId === task.id || job.taskIds?.includes(task.id))), "原票仍有未完成或待对账的检查，先用 checkStatus/checkEvidence 收口原作业。");
 }
 
 export function abandonStoppedTask(state, task, git, audit) {
-  assertStoppedTask(state,task);
+  assertStoppedTask(state, task, { allowTrial: true });
   const member=state.roles.find(role=>role.id===task.developerId);
-  requireValue(undeliveredQueuedTask(state,task)||(task.state==='paused'&&member?.state!=='running'&&member?.pending===0&&member?.jobs===0),
-    '仅当前责任未投递且已证明停写的 queued 票，或无排队输入和后台作业的 paused 票可 abandonTask；已投递责任请先 yieldForSchedule。');
+  requireValue(stoppedTrial(task) || undeliveredQueuedTask(state, task) ||
+    (task.state === "paused" && member?.state !== "running" && member?.pending === 0 && member?.jobs === 0),
+    "仅未投递且已停写的 queued 票、无排队输入和作业的 paused 票，或无责任成员的 trial 票可 abandonTask。");
   const previous=scopeSnapshot(task);
   task.abandonment={...audit};record(task,previous,{...audit,abandoned:true});
   task.state='abandoned';task.assignee=null;task.retainedWrites=[];task.scopeConflict=null;task.waitReason=null;
@@ -73,6 +76,7 @@ function scopeSnapshot(task) {
     dependencyStages: task.dependencyStages ?? {}, ownedDirty: task.ownedDirty ?? [] });
 }
 function record(task, previous, audit) {
+  assertPaths(previous.writes, `票 ${task.ticketKey ?? task.id}.scheduleHistory.previous.writes`);
   (task.scheduleHistory ??= []).push({ previous, ...audit });
   task.scheduleVersion = (task.scheduleVersion ?? 0) + 1;
 }
@@ -132,7 +136,7 @@ function replacementDependencies(state, task, successor) {
 }
 
 export function supersedeStoppedTask(state, task, successor, git, audit) {
-  assertStoppedTask(state, task);
+  assertStoppedTask(state, task, { allowTrial: true });
   requireValue(task.id !== successor.id && task.projectId === successor.projectId, "后继票必须是同项目的另一张票。");
   requireValue(!releasedTaskScope(successor) && !["accepted", "ready", "trial"].includes(successor.state), "后继票已经收尾或被替代，不能承接原票。");
   const changes = replacementDependencies(state, task, successor);
@@ -154,18 +158,36 @@ export function supersedeStoppedTask(state, task, successor, git, audit) {
   return { state: "superseded", taskId: task.id, supersededBy: successor.id, dependencyChanges: changes.map(change => change.taskId) };
 }
 
-export function scopeConflictRemedy(task, peer) {
-  return stoppedStates.has(peer.state) && task.id && task.projectId === peer.projectId
-    ? { command: "supersede", args: { taskId: peer.id, supersededBy: task.id, reason: "确认由后继票承接原票剩余工作，保留旧票全部证据" } }
-    : { command: "inspect", args: { taskId: peer.id } };
+export function scopeConflictRemedy(state, task, peer, kind, validateOrder) {
+  const inspect = { command: "inspect", args: { taskId: peer.id } };
+  if (kind === "resource") return { ...inspect, message: "等待对端释放共享资源，调度器会重新评估准入。" };
+  if (task.state !== "queued" || !state.tasks.some(item => item.id === task.id) ||
+      kind === "read-scope-unknown" || task.dependencies.includes(peer.id)) return inspect;
+  const after = [...task.dependencies, peer.id].map(taskId => ({ taskId,
+    stage: task.dependencyStages?.[taskId] ?? "verified" }));
+  try { validateOrder(after); } catch { return inspect; }
+  return { command: "reviseSchedule", args: { taskId: task.id, after, reason: "依次执行冲突票，保留两张票的责任与证据" } };
+}
+
+export function scopeReplacementRemedy(state, task, peer, git) {
+  assertStoppedTask(state, peer);
+  requireValue(task.state === "queued" && !releasedTaskScope(task) && task.id !== peer.id && peer.projectId === task.projectId &&
+    originalTaskWrites(peer).every(file => coversPath(task.writes, file)),
+    "承接票须处于 queued 且覆盖对方的写集");
+  replacementDependencies(state, peer, task);
+  const count = new Set(git.dirty.filter(file => coversPath(originalTaskWrites(peer), file))).size;
+  const reason = `主控确认两票无法顺序执行，由后继票承接。原票将放弃对 ${count} 个在途文件的责任，文件和历史证据保留。`;
+  return { command: "supersede", args: { taskId: peer.id, supersededBy: task.id, reason }, message: reason };
 }
 
 export const taskScopeSchemas = {
-  supersede: { required: ["taskId", "supersededBy", "reason"], role: "controller", allowedStates: [...stoppedStates],
+  supersede: { required: ["taskId", "supersededBy", "reason"], role: "controller", allowedStates: [...stoppedStates, "trial"],
     neverDeliveredException: 'queued 且没有投递、报告或检查历史，可由主控直接替代',
     effect: "释放原票全部调度范围，保留历史；有在途改动时返回 ownedDirty 承接提案；等待票的依赖转向后继票且保留原验收门槛", preconditions: ["原责任已停写", "无未完成检查", "同项目有效后继票", "依赖无环"], gitWrites: false },
-  abandonTask: {required:['taskId','reason'],role:'controller',allowedStates:['queued (never delivered)','paused (owner stopped)'],gitWrites:false,
+  abandonTask: {required:['taskId','reason'],role:'controller',allowedStates:['queued (never delivered)','paused (owner stopped)','trial (no assignee)'],gitWrites:false,
     effect:'终止剩余责任并释放范围，保留全部历史，不代表通过验收'},
-  releaseSchedule: { required: ["taskId", "reason"], role: "controller", allowedStates: [...stoppedStates],
+  insertSchedule: { required: ["taskId", "after", "reason"], role: "controller", allowedStates: ["queued"],
+    after: [{ ticket: "R39-01", stage: "verified" }], effect: "替换原票调度依赖，不改冻结票面、写集或已有基线", gitWrites: false },
+  releaseSchedule: { required: ["taskId", "reason"], role: "controller", allowedStates: [...stoppedStates, "assigned（已确认静默）"],
     effect: "收尾票退出调度，保留冻结证据；不标记已完成或已验收", alias: "reviseSchedule {taskId,writes:[],reason}（暂停的实施票）", gitWrites: false },
 };

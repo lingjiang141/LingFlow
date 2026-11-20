@@ -126,13 +126,17 @@ async function delivered(t) {
 
 test('F26 evidence failures route to the original developer, rework inbox lists evidence, successful rerun clears it',async t=>{
   const f=await delivered(t);
+  const heartbeat = () => f.wf.heartbeat(f.roles.map(role => ({ id: role.name, state: 'idle', pending: 0, jobs: 0 })));
   f.store.change(s=>{const job=s.checkJobs.findLast(job=>job.check.id==='full');job.state='failed';job.classification='evidence-missing';job.error='缺少完整断言回执';});
   const diagnosis=f.call('Lead','diagnoseTask',{taskId:f.taskId});
   assert.equal(diagnosis.nextAction.ownerRole,'developer');
   assert.equal(diagnosis.nextAction.ownerId,taskOf(f).developerId);
   assert.equal(diagnosis.nextAction.args.ticketKey,'NEW-TEST');
+  assert.equal(diagnosis.recovery.candidate.command, 'rework');
+  assert.deepEqual(diagnosis.recovery.candidate.args.evidence, ['full']);
   const partial=f.wf.call('Lead','diagnoseTask',{taskId:f.taskId},undefined,'dsh','evidence-busy');
-  assert.equal(partial.nextAction.ownerRole,'developer');assert.equal(partial.nextAction.ownerId,taskOf(f).developerId);
+  assert.equal(partial.nextAction, null);
+  assert.equal(partial.reference.ownerRole,'developer');assert.equal(partial.reference.ownerId,taskOf(f).developerId);
   assert.match(diagnosis.nextAction.message,/主控不得在本机执行该命令后自称已验/);
   f.store.change(s=>{const job=s.checkJobs.findLast(job=>job.check.id==='full');job.classification='environment-failed';job.environmentFailure=true;job.environmentFailureReason='webserver-start-failed';});
   const environment=f.call('Lead','diagnoseTask',{taskId:f.taskId});
@@ -140,7 +144,9 @@ test('F26 evidence failures route to the original developer, rework inbox lists 
   assert.equal(environment.nextAction.ownerId,taskOf(f).developerId);
   f.store.change(s=>{const job=s.checkJobs.findLast(job=>job.check.id==='full');job.classification='evidence-missing';job.environmentFailure=false;delete job.environmentFailureReason;});
   assert.throws(()=>f.call('Lead','rework',{taskId:f.taskId,reason:'证据需补齐',evidence:['probe','invented']}),/full|可选|非主控/);
-  f.call('Lead','rework',{taskId:f.taskId,reason:'重跑指定检查并补真实断言证据',evidence:['full']});
+  heartbeat();
+  const rework = f.call('Lead','rework',{taskId:f.taskId,reason:'重跑指定检查并补真实断言证据',evidence:['full']});
+  assert.match(rework.controllerBoundary, /亲自实现或修复/);
   assert.deepEqual(taskOf(f).reworkEvidence,['full']);
   const inbox=f.call('Dev','inbox');
   assert.match(inbox.notices.map(n=>n.summary).join('\n'),/full.*evidence-missing.*缺少完整断言回执/);
@@ -148,6 +154,7 @@ test('F26 evidence failures route to the original developer, rework inbox lists 
   assert.deepEqual(taskOf(f).reworkEvidence,[]);
   f.call('Dev','report',{taskId:f.taskId,summary:'已补指定检查',dimensions});
   const oldJob=f.store.read().checkJobs.findLast(job=>job.check.id==='full');
+  heartbeat();
   f.call('Lead','rework',{taskId:f.taskId,reason:'不信任已通过的回执，要求新回执',evidence:['full']});
   const newJob=await f.run('full');
   assert.equal(newJob.state,'passed');assert.notEqual(newJob.id,oldJob.id,'explicit evidence requests must not reuse older green receipts');

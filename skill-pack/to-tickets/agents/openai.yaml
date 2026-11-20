@@ -1,0 +1,5 @@
+interface:
+  display_name: "LingFlow · To Tickets"
+  short_description: "LingFlow workflow: to-tickets"
+policy:
+  allow_implicit_invocation: false

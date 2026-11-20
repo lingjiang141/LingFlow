@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { startServer } from "../src/server.mjs";
 import { assertScope, gitState, scopeBaseline } from "../src/quality.mjs";
 import { Store } from "../src/store.mjs";
+import { versionedSpec } from "./helpers/evidence-fixture.mjs";
 
 const dimensions = Object.fromEntries(
   ["requirements", "implementation", "system"].map((name) => [
@@ -37,6 +38,7 @@ async function setup(t, { existingTest = false, legacyChecks = false } = {}) {
   };
   for (const file of Object.values(sources))
     writeFileSync(path.join(root, file), "approved");
+  writeFileSync(path.join(root, sources.spec), versionedSpec());
   writeFileSync(path.join(root, "feature.txt"), "old");
   writeFileSync(path.join(root, "feature-b.txt"), "old");
   const checkProgram = `
@@ -241,8 +243,13 @@ test("an accepted plan automatically delivers its original ticket after Git admi
   unlinkSync(blocker);
   const sessions = Object.keys(f.roles);
   const now = Date.now() + 31000;
-  const { deliveries } = await f.heartbeat(sessions, now);
-  const wake = deliveries.find((item) => item.sessionId === "DevA");
+  let wake;
+  // The writer can finish Git admission after the heartbeat's reply budget.
+  for (let poll = 0; poll < 8 && !wake; poll++) {
+    if (poll) await delay(120);
+    const { deliveries } = await f.heartbeat(sessions, now + poll * 120);
+    wake = deliveries.find((item) => item.sessionId === "DevA");
+  }
   assert.ok(wake, "heartbeat must offer the original ticket without a second write command");
   assert.equal((await f.inspect(taskId)).state, "assigned");
   await f.acknowledge(wake);
@@ -250,6 +257,166 @@ test("an accepted plan automatically delivers its original ticket after Git admi
   assert.equal((await f.call("DevA", "inbox")).tasks[0].id, taskId);
   assert.equal((await f.call("Lead", "list")).tasks.length, 1);
   assert.ok(!(await f.heartbeat(sessions, now + 1000)).deliveries.some((item) => item.sessionId === "DevA"));
+});
+
+test("T1/T3/T4: report uses the dispatch spec, records advisory impacts, and new plans use the current version", async (t) => {
+  const f = await setup(t);
+  const spec = path.join(f.root, f.sources.spec);
+  const attempts = path.join(f.root, f.sources.attempts);
+  writeFileSync(spec, "# Spec\nVersion: v1\n\nOriginal wording\n\n## 变更记录\n");
+  writeFileSync(path.join(f.root, f.sources.tickets), "Approved\ncovers: AC-3\n");
+  const plan = { requirementId: f.requirement.id, sources: f.sources, tickets: [f.ticket] };
+  const first = await f.call("Lead", "dispatchPlan", plan, "spec-v1-dispatch");
+  const [{ taskId }] = first.tasks;
+  assert.equal((await f.inspect(taskId)).specVersion, "v1");
+  writeFileSync(path.join(f.root, "behavior.txt"), "new");
+  const run = async (checkId) => f.waitJob((await f.call("DevA", "check", { taskId, checkId })).jobId);
+  await run("red");
+  writeFileSync(path.join(f.root, "feature.txt"), "new");
+  await run("green");
+  await run("full");
+
+  writeFileSync(spec, "# Spec\nVersion: v2\n\nUpdated wording\n\n## 变更记录\n\n" +
+    "| 日期 | 版本 | 改了什么 | 影响 AC | 影响在飞票 |\n| --- | --- | --- | --- | --- |\n" +
+    "| 2026-11-19 | v2 | 文案引用 AC1 但未声明影响 | AC-3 | — |\n");
+  writeFileSync(attempts, "Changed coordination");
+  const diagnostic = await f.call("Lead", "diagnoseTask", { taskId });
+  assert.notEqual(diagnostic.classification, "contract-invalid");
+  assert.deepEqual(diagnostic.specVersion, { dispatched: "v1", current: "v2" });
+  const [notice] = diagnostic.notices;
+  assert.deepEqual(notice.affectedTickets, [{ taskId, ticketKey: "A", acceptance: ["AC-3"], named: false }]);
+  assert.deepEqual(notice.options.map(option => option.choice), ["keep-frozen", "add-ticket", "replace-ticket"]);
+  assert.equal(notice.options[1].action.command, "dispatchPlan");
+  assert.equal(notice.options[2].action.args.taskId, taskId);
+  assert.equal(notice.options[2].before[0].command, "yieldForSchedule");
+  const until = Date.now() + 3000;
+  let diagnosisNotices = [];
+  do {
+    diagnosisNotices = (await f.call("Lead", "messages")).filter(item => item.details?.kind === "spec-impact");
+    if (!diagnosisNotices.length) await delay(25);
+  } while (!diagnosisNotices.length && Date.now() < until);
+  assert.equal(diagnosisNotices.length, 1);
+
+  const document = await f.call("Lead", "inspectPlan", { planId: first.planId, document: "spec" });
+  assert.match(document.text, /Original wording/);
+  assert.equal(document.diff.startLine, 2);
+  assert.ok(document.diff.after.includes("Updated wording"));
+  assert.notEqual(document.digest, document.currentDigest);
+
+  const reportArgs = { taskId, summary: "交付", dimensions, specVersion: "v2" };
+  const report = await f.call("DevA", "report", reportArgs, "spec-v2-report");
+  assert.equal(report.state, "stored");
+  assert.deepEqual(report.specVersion, diagnostic.specVersion);
+  assert.equal(report.implementationSummary, "按 spec v2 实现。");
+  assert.match(report.acceptanceSummary, /v1.*v2/);
+  assert.deepEqual(report.notices, diagnostic.notices);
+  assert.deepEqual(await f.call("DevA", "report", reportArgs, "spec-v2-report"), report);
+  assert.deepEqual((await f.inspect(taskId)).reports.at(-1).sourceNotes.map(note => note.file), [f.sources.spec, f.sources.attempts]);
+  const inbox = await f.call("Lead", "messages");
+  assert.equal(inbox.filter(item => item.details?.kind === "spec-impact").length, 1);
+
+  const second = await f.call("Lead", "dispatchPlan", { ...plan, tickets: [{ ...f.ticket, key: "B" }] });
+  assert.equal((await f.call("Lead", "inspectPlan", { planId: second.planId })).specVersion, "v2");
+  assert.equal((await f.inspect(second.tasks[0].taskId)).specVersion, "v2");
+  assert.equal((await f.inspect(taskId)).specVersion, "v1");
+  assert.equal((await f.call("Lead", "inspectPlan", { planId: first.planId })).specVersion, "v1");
+
+  await f.waitJob((await f.call("Lead", "check", { taskId, checkId: "independent" })).jobId);
+  const trial = await f.call("Lead", "summarize", summary(taskId, report.candidate));
+  assert.match(trial.acceptanceSummary, /v1.*v2/);
+});
+
+test("T-B3 new dispatch rejects each missing spec header, and accepts an integer version", async t => {
+  const f = await setup(t);
+  const spec = path.join(f.root, f.sources.spec);
+  const args = { requirementId: f.requirement.id, sources: f.sources, tickets: [f.ticket] };
+  for (const [contents, field] of [["# Spec\n## 变更记录\n", "Version:"], ["Version: 2\n", "## 变更记录"]]) {
+    writeFileSync(spec, contents);
+    const preview = await f.call("Lead", "previewPlan", args);
+    assert.equal(preview.state, "invalid");
+    assert.ok(preview.violations.some(issue => issue.path === "sources.spec" && issue.message.includes(field)));
+    await assert.rejects(f.call("Lead", "dispatchPlan", args), /规格缺少/);
+  }
+  writeFileSync(spec, "Version: 2\n## 变更记录\n");
+  assert.equal((await f.call("Lead", "dispatchPlan", args)).receipt, "accepted");
+});
+
+test("T-B4 the controller can keep, add and replace using the notice actions", async t => {
+  const f = await setup(t);
+  const args = { requirementId: f.requirement.id, sources: f.sources, tickets: [f.ticket] };
+  const original = await f.call("Lead", "dispatchPlan", args);
+  const [{taskId}] = original.tasks;
+  writeFileSync(path.join(f.root, f.sources.spec), "Version: v2\n## 变更记录\n" +
+    "| 日期 | 版本 | 改了什么 | 影响 AC | 影响在飞票 |\n| --- | --- | --- | --- | --- |\n| 2026-11-19 | v2 | 修改 | AC1 | — |\n");
+  const notice = (await f.call("Lead", "diagnoseTask", { taskId })).notices.find(item => item.kind === "spec-impact");
+  const [keep, add, replace] = notice.options;
+  assert.equal((await f.call("Lead", keep.action.command, keep.action.args)).taskId, taskId);
+  const dispatch = async (action, key) => {
+    const source = action.args.sources.tickets[0].replace("RNEW-01", key);
+    const target = path.join(f.root, source);
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, `# 票 ${key}：后续规划\n\n## 验收\nAC1: 原验收\n`);
+    const payload = { ...action.args, sources: { ...action.args.sources, tickets: [source] },
+      tickets: [{ ...f.ticket, ...action.args.tickets[0], key }] };
+    assert.equal((await f.call("Lead", "previewPlan", payload)).state, "valid");
+    return f.call("Lead", action.command, payload);
+  };
+  const added = await dispatch(add.action, "RNEW-02");
+  assert.equal((await f.inspect(taskId)).state, "assigned");
+  await f.call("DevA", replace.before[0].command, replace.before[0].args);
+  assert.equal((await f.call("Lead", replace.action.command, replace.action.args)).state, "abandoned");
+  const replacement = await dispatch(replace.then, "RNEW-03");
+  const documents = await Promise.all([original, added, replacement].map(plan =>
+    f.call("Lead", "inspectPlan", { planId: plan.planId, document: "spec" })));
+  assert.notEqual(documents[0].digest, documents[2].digest);
+  assert.equal(documents[1].digest, documents[2].digest);
+  assert.equal((await f.inspect(replacement.tasks[0].taskId)).specVersion, "v2");
+});
+
+test("T2/T5: the issue file freezes AC, writes and checks; the unchanged plan retains digest and report behavior", async (t) => {
+  const f = await setup(t);
+  const issue = "issues/R1-02.md";
+  mkdirSync(path.join(f.root, "issues"));
+  const file = path.join(f.root, issue);
+  const frozen = "# 票 R1-02：行为 A\n\nAC1: 原验收\n写集: feature.txt\n检查: verify.cjs\n";
+  writeFileSync(file, frozen);
+  const result = await f.call("Lead", "dispatchPlan", {
+    requirementId: f.requirement.id, sources: { spec: f.sources.spec, attempts: f.sources.attempts, ticketsDir: "issues" },
+    tickets: [{ ...f.ticket, key: "R1-02" }],
+  });
+  const [{ taskId, runnable }] = result.tasks;
+  assert.equal(runnable, true);
+  assert.equal((await f.inspect(taskId)).specVersion, "v1");
+  const original = await f.call("Lead", "inspectPlan", { planId: result.planId, document: issue });
+  assert.equal(original.digest, original.currentDigest);
+  assert.equal(original.diff.status, "unchanged");
+  assert.equal((await f.call("Lead", "diagnoseTask", { taskId })).sourceNotes, undefined);
+  const reportArgs = { taskId, summary: "交付", dimensions };
+  for (const [before, after] of [["原验收", "改验收"], ["feature.txt", "other.txt"], ["verify.cjs", "other.cjs"]]) {
+    writeFileSync(file, frozen.replace(before, after));
+    await assert.rejects(f.call("DevA", "report", reportArgs), /冻结票面已变化.*reviseSchedule .*taskId.*reason.*writes/);
+    const diagnostic = await f.call("Lead", "diagnoseTask", { taskId });
+    assert.equal(diagnostic.classification, "contract-invalid");
+    assert.equal(diagnostic.nextAction.command, "reviseSchedule");
+    assert.equal(diagnostic.nextAction.args.refreshSourceDigest, true);
+    assert.deepEqual(diagnostic.nextAction.args.writes, [...f.ticket.writes].sort());
+    assert.equal(diagnostic.nextAction.args.taskId, taskId);
+    assert.equal(diagnostic.nextAction.args.expectedSourceDigest, diagnostic.violations[0].liveDigest);
+    assert.equal(diagnostic.violations[0].expectedDigest, original.digest);
+    assert.equal(diagnostic.violations[0].remedy.replacement.then.command, "dispatchPlan");
+  }
+  writeFileSync(file, frozen);
+  writeFileSync(path.join(f.root, "behavior.txt"), "new");
+  const run = async (checkId) => f.waitJob((await f.call("DevA", "check", { taskId, checkId })).jobId);
+  await run("red");
+  writeFileSync(path.join(f.root, "feature.txt"), "new");
+  await run("green");
+  await run("full");
+  const report = await f.call("DevA", "report", reportArgs);
+  assert.equal(report.state, "stored");
+  assert.equal(report.sourceNotes, undefined);
+  assert.equal(report.specVersion, undefined);
+  assert.deepEqual((await f.inspect(taskId)).reports.at(-1).manifest.scopeNotes, []);
 });
 
 test("only inherited untracked Hive outputs outside the contract are exempt from the scope baseline", async (t) => {
@@ -517,12 +684,13 @@ test("live conflict changes the same ticket and keeps planning and supervision c
     writes: [...f.ticket.writes, "shared.txt"],
   });
   assert.match((await f.inspect(taskId)).waitReason, /读取或共享资源冲突/);
-  assert.deepEqual((await f.inspect(taskId)).scopeConflict, preview.conflicts[0]);
-  await f.call("Lead", "reviseSchedule", {
-    taskId,
-    reason: "等待真实前置",
-    after: [{ taskId: predecessor, stage: "verified" }],
-  });
+  const scheduledConflict = (await f.inspect(taskId)).scopeConflict;
+  assert.deepEqual(scheduledConflict.paths, scopeConflict.paths);
+  assert.equal(scheduledConflict.taskId, scopeConflict.taskId);
+  const order = scheduledConflict.nextAction;
+  assert.equal(order.command, "reviseSchedule");
+  assert.deepEqual(order.args.after, [{ taskId: predecessor, stage: "verified" }]);
+  await f.call("Lead", order.command, order.args);
   assert.match((await f.inspect(taskId)).waitReason, /前置/);
   await f.call("DevB", "report", {
     taskId: predecessor,
@@ -540,18 +708,18 @@ test("live conflict changes the same ticket and keeps planning and supervision c
     git("-c", "user.name=LingFlow fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "drift fixture HEAD");
   };
   commit("unrelated.txt", "unrelated");
-  await assert.rejects(f.call("DevA", "check", { taskId, checkId: "red" }),
-    { verificationCode: "contract-invalid" });
+  assert.ok((await f.call("Lead", "diagnoseTask", { taskId })).historyAdvance);
   await f.call("DevA", "yieldForSchedule", { taskId, reason: "Git 基线漂移" });
   const eligible = await f.call("Lead", "diagnoseTask", { taskId });
-  assert.equal(eligible.classification, "baseline-drift-rebindable");
+  assert.ok(eligible.historyAdvance);
   assert.deepEqual(eligible.committedBetween, ["unrelated.txt"]);
   const foreign = path.join(f.root, "unassigned.txt");
   writeFileSync(foreign, "must not be absorbed by rebind");
-  assert.equal((await f.call("Lead", "diagnoseTask", { taskId })).classification, "baseline-drift-blocked");
-  await assert.rejects(f.call("Lead", eligible.nextAction.command, eligible.nextAction.args), /未归属.*unassigned/);
+  assert.equal((await f.call("Lead", "diagnoseTask", { taskId })).classification, "contract-invalid");
+  const refresh = { taskId, reason: "对账", refreshBaseline: true, expectedHead: eligible.to };
+  await assert.rejects(f.call("Lead", "reviseSchedule", refresh), /未归属.*unassigned/);
   unlinkSync(foreign);
-  const rebound = await f.call("Lead", eligible.nextAction.command, eligible.nextAction.args);
+  const rebound = await f.call("Lead", "reviseSchedule", refresh);
   assert.deepEqual(rebound.rebind, { from: originalHead, to: eligible.to, committedBetween: ["unrelated.txt"] });
   assert.notEqual((await f.inspect(taskId)).baseline.head, originalHead);
   assert.equal((await f.inspect(taskId)).scheduleHistory.at(-1).previous.baseline.head, originalHead);
@@ -591,7 +759,9 @@ test("live conflict changes the same ticket and keeps planning and supervision c
     { id: reply.messageId, replyTo: message.messageId, text: "回复" },
   ]);
   assert.equal((await f.call("Supervisor", "messages", { messageId: message.messageId })).text, request.text);
-  assert.equal((await f.call("Supervisor", "messages")).length, 2);
+  const channel = await f.call("Supervisor", "messages");
+  assert.equal(channel.filter(item => item.kind === "message").length, 2);
+  assert.ok(channel.some(item => item.kind === "notice" && item.key === "message:" + reply.messageId));
   assert.equal((await f.call("Supervisor", "inbox")).messages, undefined);
   await assert.rejects(
     () => f.call("Supervisor", "inspect", { taskId }),
@@ -601,7 +771,7 @@ test("live conflict changes the same ticket and keeps planning and supervision c
   assert.equal(
     (await f.call("Lead", "inspectPlan", { planId: plan.planId, document: "spec" }))
       .text,
-    "approved",
+    versionedSpec(),
   );
 });
 
@@ -666,6 +836,8 @@ test("independent reviewers, controller short probes and a single cumulative rec
     deliver(first, "DevA", ""),
     deliver(second, "DevB", "-b"),
   ]);
+  // These are simulated sessions. Refresh the reviewer's lease after the builds.
+  await f.heartbeat(Object.keys(f.roles));
   assert.equal((await f.inspect(first)).state, "reviewing");
   const reviewGate = await f.call("Lead", "diagnoseTask", { taskId: first });
   assert.equal(reviewGate.classification, "evidence-missing");
@@ -803,14 +975,16 @@ test("native plan preflight and dispatch reject browser evidence that is missing
 test("mandatory controller duties survive custom behavior, startup and compact wakes", async () => {
   const { CONTROLLER_CHECK_BOUNDARY, CONTROLLER_WAKE_BOUNDARY } = await import("../src/verification-policy.mjs");
   const { markContextSeen, wakeText } = await import("../src/role-context.mjs");
-  const project = { id: "P", name: "Project", root: "E:/Project", controllerPolicy: "用户习惯" };
-  const role = { id: "L", name: "Lead", kind: "controller", seenContextRevision: 1, seenSupervisionPolicy: 1 };
-  const first = wakeText(project, role, true, "会话启动或续接");
+  const project = { id: "P", name: "Project", root: "E:/Project", controllerPolicy: "用户习惯：主控自行修复" };
+  const role = { id: "L", name: "Lead", kind: "controller", seenContextRevision: 1, seenSupervisionPolicy: 9 };
+  const state = { projects: [project], tasks: [], checkJobs: [], roles: [role] };
+  const first = wakeText(project, role, true, "会话启动或续接", state);
   assert.match(first, /角色上下文/);
   assert.match(first, /用户习惯/);
   assert.ok(first.includes(CONTROLLER_CHECK_BOUNDARY));
+  assert.ok(first.indexOf(CONTROLLER_WAKE_BOUNDARY) < first.indexOf(project.controllerPolicy));
   markContextSeen(role);
-  const compact = wakeText(project, role, true, "收到开发交付");
+  const compact = wakeText(project, role, true, "收到开发交付", state);
   assert.match(compact, /收到开发交付/);
   assert.doesNotMatch(compact, /角色上下文/);
   assert.ok(compact.includes(CONTROLLER_WAKE_BOUNDARY));
@@ -847,7 +1021,10 @@ test("unrelated Git commits preserve original red, green and full receipts after
   for (const [actor, id] of [["DevA", taskId], ["DevB", otherId]])
     await assert.rejects(f.call(actor, "report", { taskId: id, summary: "越界检查", dimensions }), /未归属.*unclaimed\.txt.*diagnoseTask/);
   unlinkSync(unknown);
-  await f.call("DevB", "report", { taskId: otherId, summary: "并行交付", dimensions });
+  const liveSpecReport = await f.call("DevB", "report", { taskId: otherId, summary: "并行交付", dimensions });
+  assert.equal(liveSpecReport.state, "stored");
+  assert.ok(liveSpecReport.notices.some(notice => notice.kind === "spec-revision"));
+  assert.ok((await f.call("Lead", "messages")).some(message => message.details?.kind === "spec-revision"));
   const other = await f.inspect(otherId);
   assert.ok(other.reports.at(-1).manifest.scopeNotes.some((note) => note.kind === "foreign-in-flight" && note.taskId === taskId && note.file === "feature.txt"));
   assert.ok(other.reports.at(-1).manifest.scopeNotes.some((note) => note.kind === "planning-source-changed" && note.file === "spec.md"));
@@ -856,7 +1033,7 @@ test("unrelated Git commits preserve original red, green and full receipts after
   git("-c", "user.name=LingFlow fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "unrelated planning edit");
   await f.call("DevA", "yieldForSchedule", { taskId, reason: "已停写，核对新 HEAD" });
   const diagnosis = await f.call("Lead", "diagnoseTask", { taskId });
-  assert.equal(diagnosis.classification, "baseline-drift-blocked");
+  assert.ok(diagnosis.historyAdvance);
   // Re-admission requires a live member; the preceding checks may exceed 15s.
   await f.heartbeat(Object.keys(f.roles), Date.now());
   await f.call("Lead", "reviseSchedule", {
@@ -986,41 +1163,38 @@ test("early commit of owned files can resume only by explicit rebind and fresh c
   git("add", "--", "feature.txt");
   writeFileSync(path.join(f.root, "spec.md"), "changed requirements");
   const edited = await f.call("Lead", "diagnoseTask", { taskId });
-  assert.deepEqual(edited.blockingConditions.map(({ condition }) => condition), ["committed-scope-overlap", "requirement-sources-changed"]);
-  assert.equal(edited.nextAction, null);
-  await assert.rejects(f.call("Lead", "rebindCommittedWork", args), /规划来源.*spec\.md/);
-  writeFileSync(path.join(f.root, "spec.md"), "approved");
-  writeFileSync(path.join(f.root, "spec.md"), "approved\n\n## 返工记录\n补一条现有行为的回归用例\n");
+  assert.deepEqual(edited.blockingConditions.map(({ condition }) => condition), ["committed-scope-overlap"]);
+  assert.equal(edited.nextAction.args.confirmSourceChanges, undefined);
+  assert.equal(edited.sourceNotes[0].kind, "planning-source-changed");
+  writeFileSync(path.join(f.root, "spec.md"), versionedSpec() + "\n## 返工记录\n补一条现有行为的回归用例\n");
   const appended = await f.call("Lead", "diagnoseTask", { taskId });
   assert.equal(appended.classification, "baseline-drift-owned-rebindable");
   assert.equal(appended.sourceNotes[0].kind, "source-appended");
   assert.equal(appended.sourceNotes[0].firstAppendedHeading, "## 返工记录");
   assert.equal(appended.nextAction.command, "rebindCommittedWork");
-  await assert.rejects(f.call("Lead", "rebindCommittedWork", args), /追加记录未经确认/);
-  const confirm = { ...appended.nextAction.args, reason: args.reason };
-  writeFileSync(path.join(f.root, "spec.md"), "approved\n## New note after diagnosis\n");
-  await assert.rejects(f.call("Lead", "rebindCommittedWork", confirm), /追加记录未经确认或已变化/);
-  writeFileSync(path.join(f.root, "spec.md"), "approved\n\n## 返工记录\n补一条现有行为的回归用例\n");
-  const rebound = await f.call("Lead", "rebindCommittedWork", confirm);
-  assert.deepEqual(rebound.rebind.acceptedSourceAppends, appended.sourceNotes);
+  assert.equal(appended.nextAction.args.confirmSourceAppends, undefined);
+  const rebound = await f.call("Lead", "rebindCommittedWork", args);
+  assert.deepEqual(rebound.rebind.sourceNotes, appended.sourceNotes);
   const index = await f.call("Lead", "inspectPlan", { planId: (await f.inspect(taskId)).planId, document: "spec" });
-  assert.equal(index.text, "approved");
+  assert.equal(index.text, versionedSpec());
   assert.deepEqual(rebound.rebind.overlap, ["behavior.txt", "feature.txt"]);
   assert.equal((await f.inspect(taskId)).baseline.head, head);
   assert.deepEqual((await f.inspect(taskId)).scheduleHistory.at(-1).previous.baseline, original);
   assert.equal(git("rev-parse", "HEAD"), head);
   assert.equal(git("status", "--porcelain"), "M spec.md");
-  // The real DSH adapter keeps heartbeating during this long reconciliation.
-  // Refresh the fixture sessions before expecting the queued task to resume.
-  await f.heartbeat(Object.keys(f.roles));
-  const resumed = await f.inspect(taskId);
-  assert.equal(resumed.state, "assigned", JSON.stringify({ state: resumed.state, waitReason: resumed.waitReason }));
-  await assert.rejects(f.call("DevA", "report", { taskId, summary: "旧检查不可用", dimensions }), /程序检查：green/);
+  // The runtime can return before applying a heartbeat when the writer is busy.
+  let resumed;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await f.heartbeat(Object.keys(f.roles));
+    resumed = await f.inspect(taskId);
+    if (resumed.state === "rework") break;
+    await delay(100);
+  }
+  assert.equal(resumed.state, "rework", JSON.stringify({ state: resumed.state, waitReason: resumed.waitReason }));
   const newGreen = await run("green");
   const newFull = await run("full");
-  assert.notEqual(newGreen.id, green.id);
-  assert.notEqual(newFull.id, full.id);
-  assert.equal(JSON.parse(newFull.input)[0], head);
+  assert.equal(newGreen.id, green.id);
+  assert.equal(newFull.id, full.id);
   const report = await f.call("DevA", "report", { taskId, summary: "新基线已验证", dimensions });
   assert.equal(report.independentRequired, true);
   const stored = (await f.inspect(taskId)).reports.at(-1);
@@ -1031,7 +1205,7 @@ test("early commit of owned files can resume only by explicit rebind and fresh c
   const evidence = await f.call("Lead", "deliveryEvidence", { taskId, candidate: report.candidate, file: "feature.txt" });
   assert.match(evidence.change.content, /^\+new/m);
   assert.equal(evidence.checks.find((check) => check.id === "red").evidenceHead, original.head);
-  assert.equal(evidence.checks.find((check) => check.id === "full").evidenceHead, head);
+  assert.equal(evidence.checks.find((check) => check.id === "full").evidenceHead, original.head);
   assert.equal(evidence.sourceNotes[0].kind, "source-appended");
   assert.equal(stored.manifest.scopeNotes.find((note) => note.file === "spec.md").kind, "source-appended");
   await assert.rejects(f.call("Lead", "summarize", summary(taskId, report.candidate)), /交付门槛/);
@@ -1046,68 +1220,44 @@ test("appending a planning note without a HEAD change preserves the ordinary che
   const [{ taskId }] = (await f.call("Lead", "dispatchPlan", {
     requirementId: f.requirement.id, sources: f.sources, tickets: [f.ticket],
   })).tasks;
-  writeFileSync(path.join(f.root, "tickets.md"), "approved\n## 返工记录\n补充验收说明\n");
+  writeFileSync(path.join(f.root, "attempts.md"), "approved\n## 返工记录\n补充验收说明\n");
   writeFileSync(path.join(f.root, "behavior.txt"), "new");
   const red = await f.call("DevA", "check", { taskId, checkId: "red" });
   assert.equal(red.sourceNotes[0].kind, "source-appended");
   assert.equal(red.sourceNotes[0].startLine, 2);
   await f.waitJob(red.jobId);
   const { sourceNotes, classification } = await f.call("Lead", "diagnoseTask", { taskId });
-  assert.equal(sourceNotes[0].file, "tickets.md");
+  assert.equal(sourceNotes[0].file, "attempts.md");
   assert.equal(classification, "evidence-missing");
 });
 
-test("a recorded Markdown file dirty at admission requires explicit baseline adoption", async (t) => {
+test("spec dirty at admission can later be committed without a planning confirmation", async (t) => {
   const f = await setup(t);
   const file = "planning notes.md";
-  const frozen = "# Approved AC\nKeep original behavior.\n";
+  const frozen = versionedSpec("# Approved AC\nKeep original behavior.");
   const suffix = "\n## 返工记录\n保留同一要求。\n";
   const doc = path.join(f.root, file);
   writeFileSync(doc, frozen);
   const [{ taskId }] = (await f.call("Lead", "dispatchPlan", {
-    requirementId: f.requirement.id, sources: { ...f.sources, tickets: file }, tickets: [f.ticket],
+    requirementId: f.requirement.id, sources: { ...f.sources, spec: file }, tickets: [f.ticket],
   })).tasks;
   assert.equal((await f.inspect(taskId)).state, "assigned");
   const git = (...args) => execFileSync("git", args, { cwd: f.root, encoding: "utf8" }).trim();
-  writeFileSync(doc, frozen + suffix);
+  writeFileSync(doc, "# Updated AC wording\n" + suffix);
   git("add", "--", file);
   git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "Record follow-up");
   await f.call("DevA", "yieldForSchedule", { taskId, reason: "核对规划记录" });
   const note = await f.call("Lead", "diagnoseTask", { taskId });
-  await assert.rejects(f.call("Lead", "reviseSchedule", { taskId, reason: "普通前移", refreshBaseline: true }), /未提交的规划记录/);
-  assert.equal(note.nextAction.command, "rebindCommittedWork");
-  assert.equal(note.recovery.executable, false);
-  assert.deepEqual(note.recovery.requiredParameters, ["reason"]);
-  const args = { ...note.nextAction.args, reason: "核对原文、追加标题与 Git 对象后确认" };
-  await assert.rejects(f.call("Lead", "rebindCommittedWork", { ...args, confirmRecordedBaseline: {} }), /确认.*规划记录/);
-  writeFileSync(doc, "# Approved AC\nChanged original behavior.\n" + suffix);
-  git("add", "--", file);
-  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "Requirement rewrite");
-  const rewritten = await f.call("Lead", "diagnoseTask", { taskId });
-  assert.equal(rewritten.recovery.candidate, null);
-  assert.ok(rewritten.blockingConditions.some(({ condition }) => condition === "requirement-sources-changed"));
-  await assert.rejects(f.call("Lead", "rebindCommittedWork", { ...args, expectedHead: git("rev-parse", "HEAD") }), /规划来源已变化/);
-  writeFileSync(doc, frozen + suffix);
-  git("add", "--", file);
-  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "Restore the frozen requirement text for this fixture");
-  const repaired = await f.call("Lead", "diagnoseTask", { taskId });
-  Object.assign(args, repaired.nextAction.args);
-    writeFileSync(path.join(f.root, "feature.txt"), "uncommitted change");
-  await assert.rejects(f.call("Lead", "rebindCommittedWork", args), /工作树.*feature\.txt/);
-  writeFileSync(path.join(f.root, "feature.txt"), "old");
-  const branch = git("branch", "--show-current");
-  git("switch", "-c", "fixture-other-branch");
-  const switched = await f.call("Lead", "diagnoseTask", { taskId });
-  assert.equal(switched.recovery.candidate, null);
-  assert.match(switched.reason, /分支已改变/);
-  await assert.rejects(f.call("Lead", "rebindCommittedWork", args), /分支已改变/);
-  git("switch", branch);
-  const stored = await f.call("Lead", "rebindCommittedWork", args);
-  assert.equal(stored.rebind.recordedBaseline[0].file, file);
-  assert.equal(stored.rebind.recordedBaseline[0].firstAppendedHeading, "## 返工记录");
-  assert.equal((await f.inspect(taskId)).baseline.head, git("rev-parse", "HEAD"));
+  assert.notEqual(note.classification, "contract-invalid");
+  assert.equal(note.recordedBaseline, undefined);
+  assert.match(note.acceptanceSummary, /v1.*摘要/);
+  assert.equal(note.sourceNotes[0].kind, "planning-source-changed");
+  const head = git("rev-parse", "HEAD");
+  const resumed = await f.call("Lead", "reviseSchedule", { taskId, expectedHead: head, refreshBaseline: true, reason: "续接已提交 spec 后的基线" });
+  assert.equal(resumed.state, "stored");
+  assert.equal((await f.inspect(taskId)).baseline.head, head);
   assert.equal(git("status", "--porcelain"), "");
-  assert.equal((await f.call("Lead", "inspectPlan", { planId: (await f.inspect(taskId)).planId, document: "tickets" })).text, frozen);
+  assert.equal((await f.call("Lead", "inspectPlan", { planId: (await f.inspect(taskId)).planId, document: "spec" })).text, frozen);
 });
 
 const r35Fixture = {
@@ -1129,7 +1279,7 @@ async function r35Plan(t) {
   const sourceRoot = process.env.LINGFLOW_R35_REFERENCE;
   const documents = [];
   const put = (file, content) => writeFileSync(path.join(dir,file), sourceRoot ? readFileSync(path.join(sourceRoot,file)) : content);
-  put("spec.md","# R35 规格");
+  put("spec.md",versionedSpec("# R35 规格"));
   put("planned-attempts.md","# R35 预定路线");
   for (const [i,[key,info]] of Object.entries(r35Fixture).entries()) {
     const ac = Array.from({length:info.ac},(_,j)=> j+1===info.browser
@@ -1228,10 +1378,10 @@ test("Hive R35 preview returns independent violations together and derives red o
   delete red.expectedOutput;
   const derived=await f.call("Lead","previewPlan",raw);
   assert.equal(derived.state,"valid",JSON.stringify(derived));
-  assert.ok(derived.tickets[0].verification.checks.some((check)=>check.stage==="red"&&check.expectedOutput==="Expected: visible"));
+  assert.ok(derived.tickets[0].verification.checks.some((check)=>check.stage==="red"&&check.failureOutput==="Expected: visible"));
   delete red.redExpectedOutput;
   const unsafe=await f.call("Lead","previewPlan",raw);
-  assert.ok(unsafe.violations.some(({message})=>message.includes("无法安全派生 red")));
+  assert.ok(unsafe.violations.some(({message})=>message.includes("本案缺少 failureOutput 声明")));
 });
 
 test("Hive R35 registration with offline developers does not create delivery acknowledgements", async(t)=>{

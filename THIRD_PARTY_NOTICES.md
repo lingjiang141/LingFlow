@@ -14,3 +14,9 @@
 ## Electron 与依赖
 
 Electron 及 npm 依赖各自遵守原许可证。源码用 `package-lock.json` 固定依赖版本；Windows 便携包保留 Electron 自带的 `LICENSE` 与 `LICENSES.chromium.html`。DSH 是用户自行安装的外部宿主，本项目不随包提供 DSH。
+
+## 配套技能与安装程序
+
+`skill-pack/` 收录本机使用的 LingFlow 适配技能，其中基于 [Matt Pocock's Skills](https://github.com/mattpocock/skills) 的内容沿用其 MIT 许可，原声明见 [LICENSE-Matt-Pocock.txt](skill-pack/LICENSE-Matt-Pocock.txt)。
+
+Windows Setup 使用 [NSIS](https://nsis.sourceforge.io/) 生成。

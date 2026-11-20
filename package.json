@@ -1,6 +1,6 @@
 {
   "name": "lingflow",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -14,6 +14,7 @@
     "start": "electron .",
     "export:source": "node scripts/export-project.mjs",
     "build:portable": "node scripts/build-portable.mjs",
+    "build:installer": "node scripts/build-installer.mjs",
     "service": "node src/server.mjs",
     "test": "node --test --test-concurrency=1 tests/*.test.mjs",
     "test:panel": "node --test --test-concurrency=1 tests/panel.test.mjs tests/panel-client.test.mjs",

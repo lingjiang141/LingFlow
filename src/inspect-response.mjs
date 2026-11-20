@@ -40,11 +40,14 @@ export function inspectResponse(value, args = {}) {
   }
   if (args.section !== undefined) return fullResponse(value, args);
   const allowed = ['id','ticketKey','projectId','state','risk','readOnly','candidate','revision','scheduleVersion','assignee','developerId',
+    'elapsedSinceDeliveryMs','elapsedSinceLastCheckMs','blockedOnContractMs','ownedDirtyProposal','waitTimings','developerChecksPending','checksRegisteredAt','intervention',
     'admittedAt','deliveredAt','reportedAt','acceptedAt','summarizedAt','reworkEvidence','reworkEvidenceDetails','verificationMode','deliveryState','deliveryIssue','blockedBy','ownerState','wakeHealth',
     'ownerSilentForMs','lastHeartbeatAt','lastTurnState','environmentFailure','environmentFailureReason','evidenceKind','matchedRule','elapsedMs','redEvidenceRequirement','reason','hint','membersCanRetry','nextAction','supersededBy','supersession','abandonment','staleReason','scopeReleased','scopeConflict','evidence'];
   const result = Object.fromEntries(allowed.filter(key => value[key] !== undefined).map(key => [key, value[key]]));
   result.title = String(value.title ?? '').slice(0, 500);
   result.description = String(value.description ?? '').slice(0, 4000);
+  if (value.state === "accepted" && value.acceptance)
+    result.acceptanceRecord = typeof value.acceptance === "string" ? { evidence: value.acceptance } : value.acceptance;
   const acceptance = value.verification?.acceptance ?? [];
   result.acceptance = acceptance.slice(0, 100).map(ac => ({ id: ac.id, text: String(ac.text ?? '').slice(0, 2000) }));
   result.checks = (value.checkJobs ?? []).slice(-50).map(compactCheck);

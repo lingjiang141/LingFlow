@@ -95,7 +95,7 @@ export function planGlobalSkills(roots, canonical = path.join(project,'skills'))
 if(process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   const args=process.argv.slice(2),value=flag=>args[args.indexOf(flag)+1];
   const roots=[args.includes('--codex-root')?value('--codex-root'):path.join(os.homedir(),'.codex/skills'),args.includes('--dsh-root')?value('--dsh-root'):path.join(os.homedir(),'.dsh/skills')].map(p=>path.resolve(p));
-  const plan=planGlobalSkills(roots);
+  const plan=planGlobalSkills([roots[0]]);
   if(!args.includes('--apply')) console.log(JSON.stringify({state:'preview',roots,changedFiles:plan.length,files:plan.map(p=>p.file)},null,2));
   else {
     if(process.platform!=='win32')throw Error('Verified ZIP backup requires Windows.');

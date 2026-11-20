@@ -37,8 +37,12 @@ test("supersede releases paused scope immediately, preserves all evidence and ne
   const conflict = plan.tasks[0].scopeConflict;
   assert.equal(conflict.peerState, "paused");
   assert.match(conflict.message, /paused/);
-  assert.equal(conflict.remedy.command, "supersede");
-  assert.deepEqual(conflict.remedy.args, { ...replacement(f, nextId), reason: conflict.remedy.args.reason });
+  assert.equal(conflict.remedy.command, "reviseSchedule");
+  assert.deepEqual(conflict.remedy.args.after, [{ taskId: f.taskId, stage: "verified" }]);
+  assert.equal(f.call("Lead", "diagnoseTask", { taskId: nextId }).nextAction.command, "reviseSchedule");
+  const replacementDiagnosis = f.call("Lead", "diagnoseTask", { taskId: nextId, supersedeConflict: f.taskId });
+  assert.equal(replacementDiagnosis.nextAction.command, "supersede");
+  assert.deepEqual(replacementDiagnosis.nextAction.args, { ...replacement(f, nextId), reason: replacementDiagnosis.nextAction.args.reason });
   const snapshot = gitSnapshot(f);
   const log = readFileSync(red.output);
   const result = f.call("Lead", "supersede", replacement(f, nextId), "replace-once");
@@ -58,6 +62,24 @@ test("supersede releases paused scope immediately, preserves all evidence and ne
   assert.deepEqual(gitSnapshot(f), snapshot);
   assert.throws(() => f.call("Dev", "check", { taskId: f.taskId, checkId: "red" }), /阶段|替代/);
   assert.equal(f.call("Lead", "scopePreview", { taskId: nextId, writes: after.writes, reads: [] }).conflicts.some(peer => peer.taskId === f.taskId), false);
+});
+
+test("shared resources wait for release without suggesting replacement", async t => {
+  const f = await fixture(t);
+  pause(f);
+  const root = f.store.read();
+  const developerId = root.tasks[0].developerId;
+  f.store.change(s => { s.tasks[0].resources = ["test-database"]; });
+  const plan = f.call("Lead", "dispatchPlan", {
+    requirementId: root.requirements[0].id,
+    sources: { spec: "spec.md", tickets: "tickets.md", attempts: "attempts.md" },
+    tickets: [{ key: "RESOURCE", developerId, title: "检查共享资源", description: "读取配置",
+      risk: "low", readOnly: true, writes: [], reads: ["spec.md"], resources: ["test-database"] }],
+  });
+  const diagnosis = f.call("Lead", "diagnoseTask", { taskId: plan.tasks[0].taskId });
+  assert.equal(diagnosis.scopeConflict.kind, "resource");
+  assert.equal(diagnosis.nextAction.command, "inspect");
+  assert.match(diagnosis.reason, /等待对端释放共享资源/);
 });
 
 test("replacement cycles are rejected even when untracked work needs a handoff", async t => {

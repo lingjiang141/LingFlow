@@ -4,9 +4,9 @@ import { commandTimeout, commandTimeoutResult, executionPolicy } from "./executi
 
 const readCommands = new Set([
   "guide", "schema", "context", "operation", "checkStatus", "inspectPlan",
-  "messages", "list", "inspect", "scopePreview", "cacheDiagnostics",
+  "messages", "list", "inspect", "scopePreview", "cacheDiagnostics", "buildCache",
 ]);
-const evidenceCommands = new Set(["checkEvidence", "deliveryEvidence", "previewPlan", "diagnoseTask", "governance"]);
+const evidenceCommands = new Set(["checkEvidence", "deliveryEvidence", "previewPlan", "diagnoseTask", "describeDrift", "governance"]);
 const heartbeatBudgetMs = 650;
 
 async function startWorker(dataDir, readOnly, execution) {
@@ -22,13 +22,13 @@ async function startWorker(dataDir, readOnly, execution) {
     resolveReady = resolve;
     rejectReady = reject;
   });
-  worker.on("message", ({ ready, id, result, error, verificationCode, violations, progress, inspection }) => {
+  worker.on("message", ({ ready, id, result, error, verificationCode, violations, nextAction, progress, inspection }) => {
     if (ready) return resolveReady();
     const request = pending.get(id);
     if (!request) return;
     if (progress) return request.onProgress?.(progress);
     pending.delete(id);
-    if (error !== undefined) request.reject(Object.assign(Error(error), { verificationCode, violations }));
+    if (error !== undefined) request.reject(Object.assign(Error(error), { verificationCode, violations, nextAction }));
     else {
       if (inspection && result && typeof result === "object") Object.defineProperty(result, inspectionMetadata, { value: inspection });
       request.resolve(result);
@@ -135,7 +135,10 @@ export async function startWorkflowRuntime(dataDir, execution) {
     // A timed out reply can leave pending wakes in SQLite. The next poll can
     // offer those same IDs and the relay still verifies them before admission.
     const available = heartbeat.deliveries.filter((wake) => sessions.some((session) =>
-      session?.id === wake.sessionId && !session.toolsMissing?.length && session.state === "idle" && session.pending === 0 && !(session.jobs > 0),
+      session?.id === wake.sessionId && !session.toolsMissing?.length &&
+      (wake.taskIntervention && session.state === "running" || session.state === "idle" &&
+        (wake.queuedInputFingerprint ? session.pendingInputFingerprint === wake.queuedInputFingerprint && (wake.taskIntervention || session.jobs === 0)
+          : session.pending === 0 && (wake.taskIntervention || !(session.jobs > 0)))),
     ));
     heartbeat.deliveries = [];
     if (available.length || heartbeat.pending) return { deliveries: available };

@@ -1,0 +1,5 @@
+interface:
+  display_name: "LingFlow · To Spec"
+  short_description: "LingFlow workflow: to-spec"
+policy:
+  allow_implicit_invocation: false
