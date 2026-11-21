@@ -1,4 +1,5 @@
 import { releasedTaskScope } from "./task-scope.mjs";
+import { excerpt } from "../ui/handoff-card.js";
 
 export function activeTaskIntervention(task) {
   const request = task?.intervention;
@@ -14,14 +15,13 @@ export function interventionHostJobsSettled(state, request) {
 }
 
 export function interventionPrompt(task, request) {
-  const args = JSON.stringify({ taskId: task.id, requestId: request.id, reason: "填写实际处理回执" });
   return [
-    `LingFlow · ${request.mode === "stop" ? "停止原票" : "实施纠偏"} · ${task.ticketKey ?? task.id}`,
-    `先用 inspect {taskId:"${task.id}"} 核对原票仍在 assigned 或 rework，revision=${request.revision}，scheduleVersion=${request.scheduleVersion}（缺省为 0），且 intervention 为 requested、ID 为 ${request.id}。条件变化时结束此指令。`,
-    `主控指令：${request.reason}`,
+    `LingFlow · ${request.mode === "stop" ? "停止原票" : "实施纠偏"} · ${task.ticketKey ?? task.id.slice(0, 8)}《${excerpt(task.title, 44)}》`,
+    `主控指令：${excerpt(request.reason, 180)}`,
+    `先用 lingflow_team 的 inbox 核对原票上的当前干预（编号尾号 ${request.id.slice(-8)}）。确认请求仍待处理后按原票执行。`,
     request.mode === "stop"
       ? "立即停止该票新增写入与检查，保留在途文件和日志。先核对自己启动的写入进程已停止，再提交停写回执。LingFlow 检查可随后独立收口。"
       : "按此指导继续当前票，保持冻结验收、检查和写集。发现需要改变契约时回报主控。",
-    `执行 ackTaskIntervention ${args}。`,
+    "回执用 ackTaskIntervention，沿用原票和干预记录里的完整编号。",
   ].join("\n");
 }

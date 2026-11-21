@@ -11,10 +11,11 @@ const result = { errors: [] };
 app.whenReady().then(async () => {
   const main = new BrowserWindow({ show: false, webPreferences: { preload: path.join(__dirname, "selection-preload.cjs"), contextIsolation: true, sandbox: true } });
   await main.loadURL("data:text/html,<title>Pet smoke host</title>");
-  const states = ["accepted", "ready", "trial", "superseded", "assigned", "rework", "reviewing", "waiting_verification", "queued", "paused", "queued", "queued"];
-  const titles = ["统一 AI 出题入口", "移除重复表单", "资源预选状态回显", "旧入口兼容票", "生成记录面板", "停止任务交互", "状态一致性核对", "接口与界面联合验证", "空态与失败提示", "补齐边界回归", "资源列表刷新", "整版收口检查"];
+  const states = ["accepted", "ready", "trial", "superseded", "assigned", "rework", "reviewing", "waiting_verification", "queued", "paused", "queued", "queued", "paused", "abandoned"];
+  const titles = ["统一 AI 出题入口", "移除重复表单", "资源预选状态回显", "旧入口兼容票", "生成记录面板", "停止任务交互", "状态一致性核对", "接口与界面联合验证", "空态与失败提示", "补齐边界回归", "资源列表刷新", "整版收口检查", "已释放范围的票", "已放弃的票"];
   const snapshot = { projects: [{ id: "project", name: "员工考试系统" }], roles: [{ id: "dev", name: "开发成员" }],
     tasks: states.map((state, index) => ({ id: "ticket-" + index, projectId: "project", developerId: "dev", state,
+      ...(index === 12 && { releasedScope: { reason: "保留历史" } }),
       ticketKey: "R35-" + String(index + 1).padStart(2, "0"), title: titles[index],
       description: "核对页面中的实际行为，保持入口、状态与接口回执一致。", sources: { spec: { file: "R35 · AI 出题工作台.md", digest: index < 5 ? "revision-one" : index < 7 ? "revision-two" : "revision-three" } } })) };
   let pointer = { x: 400, y: 300 };
@@ -56,7 +57,9 @@ app.whenReady().then(async () => {
   assert.equal(await evaluate("document.getElementById('progress-label').textContent"), "3 / 11 已收口 · 1 已验收");
   assert.equal(await evaluate("document.querySelector('#active .ticket').dataset.id"), "ticket-4");
   assert.equal(await evaluate("document.querySelector('#closed .ticket').dataset.id"), "ticket-2");
-  assert.equal(await evaluate("document.querySelector('#closed .ticket:last-child').dataset.id"), "ticket-3");
+  assert.equal(await evaluate("document.querySelector('#closed .ticket:last-child').dataset.id"), "ticket-13");
+  assert.equal(await evaluate("document.querySelector('#closed .ticket:nth-last-child(2)').dataset.id"), "ticket-12");
+  assert.equal(await evaluate("document.querySelector('#closed h2 b').textContent"), "3 · 历史 3");
   result.priorityOrdering = true;
   assert.match(await evaluate("document.getElementById('spec').selectedOptions[0].textContent"), /本轮全部票/);
   const versionKey = JSON.stringify(["R35 · AI 出题工作台.md", "revision-two"]);
@@ -64,7 +67,7 @@ app.whenReady().then(async () => {
   await until("document.querySelectorAll('.ticket').length === 2");
   assert.equal(await evaluate("document.getElementById('progress-label').textContent"), "0 / 2 已收口 · 0 已验收");
   await evaluate("document.getElementById('spec').value = 'current'; document.getElementById('spec').dispatchEvent(new Event('change'))");
-  await until("document.querySelectorAll('.ticket').length === 12");
+  await until(`document.querySelectorAll('.ticket').length === ${states.length}`);
   result.specCycleIncludesAdditions = true;
   await capture("spec-cycle-all-revisions");
   main.showInactive();
@@ -97,7 +100,7 @@ app.whenReady().then(async () => {
   assert.ok(pet.window.getBounds().width <= 184);
   snapshot.tasks.push(...Array.from({ length: 24 }, (_, index) => ({ ...snapshot.tasks[8], id: "more-" + index, ticketKey: "R35-" + (index + 20) })));
   await evaluate("document.getElementById('pet').click()");
-  await until("document.querySelectorAll('.ticket').length === 36");
+  await until(`document.querySelectorAll('.ticket').length === ${states.length + 24}`);
   assert.equal(await evaluate("document.querySelector('#waiting .tickets').scrollHeight > document.querySelector('#waiting .tickets').clientHeight"), true);
   result.allTicketsVisibleInScrollableGroups = true;
   lifecycle.menu.getMenuItemById("open").click();

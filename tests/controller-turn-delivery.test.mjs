@@ -3,6 +3,8 @@ import path from "node:path";
 import test from "node:test";
 import { createRelay } from "../adapters/dsh/relay.mjs";
 import { createDshTelemetry } from "../adapters/dsh/telemetry.mjs";
+import { dshWakeText } from "../src/role-context.mjs";
+import { dshWakeSummary } from "../src/wake-card.mjs";
 import { fixture } from "./helpers/evidence-fixture.mjs";
 
 async function setup(t) {
@@ -62,6 +64,56 @@ test("controller returns accumulate across a turn and compaction, then queue onc
   await relay.accept(f.heartbeat());
   assert.equal(f.prompts.length, 1);
   assert.equal(f.prompts[0].mode, "queue");
+});
+
+test("DSH controller short cards lead with ticket results and keep complete evidence in the original ticket", async t => {
+  const f = await setup(t);
+  f.call("Lead", "inbox");
+  f.notice(1);
+  const dimensions = {
+    requirements: { state: "pass", evidence: "证据详情只在原票" },
+    implementation: { state: "issues", evidence: "旧文件入口不一致" },
+    system: { state: "unverified", evidence: "多项目选择尚未覆盖" },
+  };
+  f.store.change(s => {
+    const task = s.tasks.find(task => task.id === f.taskId);
+    task.ticketKey = "R8-04";
+    task.title = "优化考核导出";
+    task.reports.push({ id: "fixture-1", summary: "考核报表支持按部门导出", dimensions });
+    task.reviews.push({ id: "fixture-review", verdict: "changes", findings: "跨部门导出时可能漏行", dimensions });
+    f.wf.notice(s, f.role.id, "review:fixture-review", "审查需返工", task.id);
+    f.wf.notice(s, f.role.id, "check:fixture-check:passed", "普通检查回执", task.id);
+    const developer = s.roles.find(role => role.kind === "developer");
+    s.messages.push({ id: "fixture-message", from: developer.id, to: f.role.id, projectId: task.projectId, text: "旧版模板是否保留？" });
+    f.wf.notice(s, f.role.id, "message:fixture-message", "成员回复：fixture-message");
+  });
+  f.advance(30000);
+  const [wake] = f.heartbeat();
+  await createRelay(f.relayOptions).accept([wake]);
+  assert.equal(f.prompts.length, 1);
+  assert.equal(f.prompts[0].content[0].text, wake.text);
+  assert.ok(wake.text.indexOf("主控不得写业务代码") < wake.text.indexOf("当前事项"));
+  for (const expected of ["R8-04《优化考核导出》", "考核报表支持按部门导出", "跨部门导出时可能漏行",
+    "开发自测", "三维审查", "需求正确性 通过", "实现一致性 有问题", "系统影响 未验证", "旧版模板是否保留？", "inbox"])
+    assert.ok(wake.text.includes(expected), expected);
+  assert.doesNotMatch(wake.text, /actionable|动态详情|当前状态|HEAD：|taskId=|candidate=|context:v|普通检查回执|证据详情只在原票/);
+  assert.ok(wake.text.length <= 760);
+  assert.equal(f.call("Lead", "inbox").notices.length, 4);
+  const { items: [review] } = f.call("Lead", "inspect", { taskId: f.taskId, section: "reviews" });
+  assert.equal(review.findings, "跨部门导出时可能漏行");
+  assert.deepEqual(review.dimensions, dimensions);
+});
+
+test("short cards keep all three results on each shown ticket within the display budget", () => {
+  const dimensions = Object.fromEntries(["requirements", "implementation", "system"].map(key => [key, { state: "pass" }]));
+  const tasks = Array.from({ length: 5 }, (_, index) => ({ id: `task-${index}`, ticketKey: `R8-0${index + 1}`,
+    title: "考核结果😀".repeat(20), reviews: [{ id: `review-${index}`, verdict: "pass", dimensions, findings: "有结果😀".repeat(200) }] }));
+  const notices = tasks.map((task, index) => ({ key: `review:review-${index}`, taskId: task.id, summary: "审查通过", actionable: true }));
+  const summary = dshWakeSummary(notices, tasks, [], []);
+  const card = dshWakeText({ name: "项目".repeat(50) }, { name: "主控".repeat(50), kind: "controller" }, summary);
+  assert.ok(card.length <= 760);
+  assert.equal((card.match(/系统影响 通过/g) ?? []).length, 4);
+  assert.match(card, /另有 1 项，见收件箱。$/);
 });
 
 test("a stale boundary cannot admit a report while validating against a new turn or an open compaction", async t => {

@@ -1,8 +1,9 @@
-import { noticeQualitySummary } from "../ui/quality-summary.js";
+import { noticeQualitySummary, qualityDimensions, qualityStateLabel } from "../ui/quality-summary.js";
 import { handoffLines, handoffRecord } from "../ui/handoff-card.js";
 import { silentResumeText } from "./controller-notices.mjs";
 
 const LIMIT = 4;
+export const DSH_SUMMARY_LIMIT = 480;
 
 const checkStates = {
   passed: "通过",
@@ -21,6 +22,11 @@ function excerpt(value, limit = 80) {
   return characters.length > limit
     ? characters.slice(0, limit).join("") + "…"
     : characters.join("");
+}
+
+function dshExcerpt(value, limit) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  return text.length > limit ? text.slice(0, limit - 1).replace(/[\uD800-\uDBFF]$/, "") + "…" : text;
 }
 
 function purpose(notice, task, job, kind, ref, phase) {
@@ -102,13 +108,16 @@ function purpose(notice, task, job, kind, ref, phase) {
             priority: 2,
           };
     }
-    case "question":
+    case "question": {
+      const question = task?.questions?.find(item => item.id === ref);
+      const blocked = question?.blocking ?? notice.summary.startsWith("任务阻塞：");
       return {
-        label: "成员遇到阻塞",
-        detail: notice.summary.replace(/^任务阻塞：/, ""),
+        label: blocked ? "成员遇到阻塞" : "成员提问",
+        detail: question?.text || notice.summary.replace(/^任务(?:阻塞|提问)：/, ""),
         next: "查看问题并沿原票答复。",
         priority: 0,
       };
+    }
     case "answer":
       return {
         label: "主控已答复",
@@ -227,7 +236,7 @@ function purpose(notice, task, job, kind, ref, phase) {
   }
 }
 
-export function wakeSummary(notices, tasks, jobs, roles = []) {
+function noticeItems(notices, tasks, jobs) {
   const groups = new Map();
   for (const notice of notices) {
     const [kind, ref, phase] = notice.key.split(":");
@@ -240,16 +249,57 @@ export function wakeSummary(notices, tasks, jobs, roles = []) {
         : undefined;
     const item = purpose(notice, task, job, kind, ref, phase);
     // Repeated blockers on the same ticket share a row; distinct jobs keep their names.
-    const key = notice.silent ? "silent-resume" : JSON.stringify([kind, task?.id, item.label, job?.id, ["report", "report-blocked", "review"].includes(kind) ? ref : undefined]);
+    const key = notice.silent ? "silent-resume" : JSON.stringify([kind, task?.id, item.label, job?.id, ["report", "report-blocked", "review", "message"].includes(kind) ? ref : undefined]);
     const previous = groups.get(key);
-    const quality = notice.silent ? null : noticeQualitySummary(notice, task);
-    groups.set(key, { ...item, task, quality, handoff: notice.silent ? [] : handoffLines(notice, task, roles), count: (previous?.count ?? 0) + 1, hasPolicy: notice.actionable !== undefined, actionable: previous?.actionable || notice.actionable, controllerChecked: notice.controllerChecked && (previous?.controllerChecked ?? true) });
+    groups.set(key, { ...item, notice, kind, phase, task, count: (previous?.count ?? 0) + 1,
+      actionable: previous?.actionable || notice.actionable,
+      controllerChecked: notice.controllerChecked && (previous?.controllerChecked ?? true) });
   }
-  const items = [...groups.values()].sort(
+  return [...groups.values()].sort(
     (a, b) => Number(Boolean(b.actionable)) - Number(Boolean(a.actionable)) || (a.priority ?? 1) - (b.priority ?? 1),
   );
+}
+
+function dshResult({ notice, kind, phase, task, label, detail, next, count }, roles, messages, budget) {
+  const record = handoffRecord(notice, task);
+  const message = kind === "message" && messages.find(item => item.id === notice.key.split(":")[1] && item.to === notice.roleId);
+  const sender = message && roles.find(role => role.id === message.from)?.name;
+  const ticket = task ? ` · ${dshExcerpt(task.ticketKey || "原票", 20)}《${dshExcerpt(task.title, 26)}》` : "";
+  const channel = kind === "message" && /^(监管者转达用户消息|主控已回复监管消息|规划已交付)/.test(notice.summary);
+  const heading = kind !== "message" || channel ? label : sender ? `${sender}的消息` : "团队消息";
+  const headline = `- ${dshExcerpt(heading, 24)}${ticket}${count > 1 ? `（共 ${count} 条）` : ""}`;
+  const dimensions = record?.dimensions && Object.entries(qualityDimensions).map(([key, name]) =>
+    `${name} ${qualityStateLabel(record.dimensions[key]?.state)}`).join(" · ");
+  const quality = dimensions ? `\n  ${kind === "review" && !phase ? "三维审查" : "开发自测"}：${dimensions}` : "";
+  const example = kind === "dispatch" && !detail ? task?.brief || task?.description : detail;
+  const result = message?.text ?? (kind === "message" ? "原文见收件箱。" : record?.blocker || example ||
+    (!task && kind !== "resume" || kind === "report" || kind === "review" && !phase ? notice.summary : ""));
+  const followUp = record?.request || record?.openItems?.find(item => item.blocking)?.text ||
+    (kind === "patrol-resume" && !task ? next : "");
+  const available = budget - headline.length - quality.length - 3;
+  const detailBudget = Math.min(available, 84);
+  const body = detailBudget > 1 ? dshExcerpt([result, followUp].filter(Boolean).join("。"), detailBudget) : "";
+  return headline + (body ? "\n  " + body : "") + quality;
+}
+
+export function dshWakeSummary(notices, tasks, jobs, roles, messages = []) {
+  const highlights = notices.filter(notice => !notice.silent && notice.actionable !== false);
+  const items = noticeItems(highlights, tasks, jobs);
+  const business = items.filter(item => item.kind !== "resume" && item.kind !== "context");
+  const results = business.length ? business : items;
+  const shown = results.slice(0, LIMIT);
+  const footer = results.length > LIMIT ? `\n另有 ${results.length - LIMIT} 项，见收件箱。` : "";
+  const rowBudget = Math.floor((DSH_SUMMARY_LIMIT - footer.length - shown.length + 1) / Math.max(1, shown.length));
+  return shown.map(item => dshResult(item, roles, messages, rowBudget)).join("\n") + footer;
+}
+
+export function wakeSummary(notices, tasks, jobs, roles = []) {
+  const items = noticeItems(notices, tasks, jobs);
   const shown = items.slice(0, LIMIT);
-  const lines = shown.map(({ label, detail, next, task, quality, handoff, count, hasPolicy, actionable, controllerChecked }) => {
+  const lines = shown.map(({ label, detail, next, task, notice, count, actionable, controllerChecked }) => {
+    const quality = notice.silent ? null : noticeQualitySummary(notice, task);
+    const handoff = notice.silent ? [] : handoffLines(notice, task, roles);
+    const hasPolicy = notice.actionable !== undefined;
     const ticket = task
       ? `｜任务 ${excerpt(task.ticketKey || task.id.slice(0, 8), 24)}《${excerpt(task.title, 58)}》`
       : "";

@@ -7,6 +7,7 @@ import { activeDshJobs, createDshTelemetry } from "./telemetry.mjs";
 import { commandTimeout, commandTimeoutResult, executionPolicy } from "../../src/execution-policy.mjs";
 import { installedToolsVersion } from "./tool-registration.mjs";
 import { createToolWatchdog } from "./tool-watchdog.mjs";
+import { createControllerWaitPolicy } from "./controller-wait-policy.mjs";
 
 export const name = "lingflow-dsh";
 export const inject = ["tools", "agents", "sessionController", "jobs"];
@@ -51,7 +52,9 @@ export async function apply(ctx, config) {
     });
     const value = await response.json();
     if (!response.ok) throw Error((value.code ? "[" + value.code + "] " : "") + (value.error || "LingFlow 请求失败") + (value.violations ? "\n" + JSON.stringify(value.violations) : "") +
-      (value.nextAction ? "\n" + JSON.stringify({ nextAction: value.nextAction }) : ""));
+      (value.nextAction || value.unownedWrites || value.blockers ? "\n" + JSON.stringify({
+        nextAction: value.nextAction, unownedWrites: value.unownedWrites, blockers: value.blockers,
+      }) : ""));
     return value;
   };
   const observe = createDshTelemetry(ctx);
@@ -132,12 +135,29 @@ export async function apply(ctx, config) {
       },
     }),
   ];
-  const watchdog = createToolWatchdog({ ctx, definitions, bindings: async () => (await api("bindings", {})).sessions });
-  const install = agent => watchdog.ensure(agent);
+  const waitPolicy = createControllerWaitPolicy(ctx);
+  let bindingsRequest;
+  const bindings = () => bindingsRequest ??= api("bindings", {}).then(({ sessions, controllerSessions = [] }) => {
+    waitPolicy.update(controllerSessions, ctx.agents.list());
+    return sessions;
+  }).finally(() => { bindingsRequest = undefined; });
+  const watchdog = createToolWatchdog({ ctx, definitions, bindings });
+  const install = agent => {
+    waitPolicy.ensure(agent);
+    return watchdog.ensure(agent);
+  };
+  ctx.on("tools/pre-execute", async ({ agent, name }, next) => {
+    // A stale tool proposal can arrive just after binding, before the bridge heartbeat.
+    if (agent && name === "wait_agent" && !waitPolicy.isController(agent))
+      await bindings().catch(() => {});
+    return next();
+  });
   ctx.on("agent/created", ({ agent }) => install(agent));
   ctx.on("agent/status", ({ agent }) => install(agent));
-  ctx.on("agent/pre-step", ({ agent }, next) => {
+  ctx.on("agent/pre-step", (step, next) => {
+    const { agent } = step;
     if (!install(agent)) throw Error("bridge-tools-missing：LingFlow 工具无法注册，请检查桥接状态");
+    if (waitPolicy.shouldYield(step)) return { kind: "reject" };
     return next?.();
   });
   for (const agent of ctx.agents.list()) install(agent);
@@ -203,6 +223,7 @@ export async function apply(ctx, config) {
   ctx.effect(() => () => {
     clearInterval(timer);
     watchdog.dispose();
+    waitPolicy.dispose();
     abort.abort();
   });
 }

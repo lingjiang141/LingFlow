@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 export const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const roots = ["src", "desktop", "adapters", "panel", "skills", "skill-pack", "tests", "ui", ".github"];
 const files = ["package.json", "package-lock.json", ".gitignore", "AGENTS.md", "LICENSE", "README.md", "THIRD_PARTY_NOTICES.md"];
-const docs = ["deployment.md", "data-storage.md", "desktop-pet.md", "lingflow-contract.md", "command-arguments.md", "environment-failure.md", "global-skills.md", "planning-workflow.md"];
+const docs = ["deployment.md", "data-storage.md", "desktop-pet.md", "lingflow-contract.md", "command-arguments.md", "environment-failure.md", "global-skills.md", "planning-workflow.md",
+  "images/lingflow-workbench.png", "images/lingflow-pet-progress.png"];
 const scripts = ["check.mjs", "desktop-smoke.mjs", "dsh-contract.mjs", "prepare-dsh.mjs", "register-dsh.mjs", "adapt-global-skills.mjs", "backup-global-skills.ps1",
   "export-project.mjs", "build-portable.mjs", "build-installer.mjs", "installer.nsi", "migrate-data.ps1", "panel-install.mjs", "panel-e2e.mjs",
   "panel-embed-probe.mjs", "panel-embed-probe-main.cjs", "panel-visual.mjs", "panel-visual-main.cjs",

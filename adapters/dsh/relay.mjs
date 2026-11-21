@@ -9,6 +9,7 @@ import { dirname } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { activeDshJobs } from "./telemetry.mjs";
 import { turnBlocksDelivery } from "../../src/wake-policy.mjs";
+import { wakeGeneration } from "../../src/wake-state.mjs";
 
 const maxAttempts = 4;
 const renameWait = new Int32Array(new SharedArrayBuffer(4));
@@ -90,7 +91,7 @@ export function createRelay({ file, agents, controller, api, signal, activeJobs 
       return;
     }
     let entry = ledger[key];
-    const generation = wake.deliveryRetry ?? 0;
+    const generation = wakeGeneration(wake);
     if(entry && (entry.generation??0)!==generation) {
       if(generation<(entry.generation??0))return;
       if(['intent','uncertain'].includes(entry.state)) {

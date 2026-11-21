@@ -37,3 +37,20 @@ export function specChoices(board) {
     ["all", "全部项目任务（含未关联规格）"],
   ];
 }
+
+export function isHistoricalTicket(task) {
+  return task.state === "superseded" || task.state === "abandoned" || Boolean(task.releasedScope || task.scopeReleased);
+}
+
+export function ticketColumns(tasks) {
+  const current = tasks.filter(task => !isHistoricalTicket(task));
+  const history = tasks.filter(isHistoricalTicket);
+  const inStates = (...states) => current.filter(task => states.includes(task.state));
+  return [
+    { title: "进行中", tasks: inStates("queued", "assigned", "rework", "paused", "blocked") },
+    { title: "审查与处理", tasks: inStates("waiting_review", "waiting_verification", "waiting_batch", "reviewing", "changes_requested") },
+    { title: "交付与验收", tasks: [...inStates("ready", "trial", "accepted"),
+      ...history.filter(task => task.state !== "abandoned"), ...history.filter(task => task.state === "abandoned")],
+      historyCount: history.length },
+  ];
+}

@@ -827,17 +827,25 @@ function isUntrackedHiveOutput(task, file, untracked) {
   return !overlaps([file], protectedOwnershipPaths(task));
 }
 
+export function unownedWriteError(task, ownDirty) {
+  const owned = task.ownedDirty ?? [];
+  const unownedWrites = ownDirty.filter(file => !owned.includes(file));
+  if (!unownedWrites.length) return null;
+  const nextAction = { command: "reviseSchedule", ownerRole: "controller",
+    args: { taskId: task.id, ownedDirty: [...new Set([...owned, ...unownedWrites])], reason: "已逐项核对写集内已有改动的来源和承接归属" } };
+  return Object.assign(Error("写入范围内存在未分配的已有改动：" + summarizePaths(unownedWrites) +
+    "；核对归属后用 reviseSchedule {ownedDirty:[...]} 登记承接，保留实际文件。"),
+    { verificationCode: "contract-invalid", unownedWrites, nextAction });
+}
+
 export function scopeBaseline(root, task, foreignWrites, git = gitState(root, task)) {
   verify(!(git.shortStatus ?? []).some(({ status, file }) => ![" ", "?"].includes(status[0]) &&
     overlaps([file], protectedOwnershipPaths(task)) && !livePlanningFile(task, file)),
     "contract-invalid", "暂存区包含已冻结路径，先核对暂存归属");
   const origin = `票 ${task.ticketKey ?? task.id}`;
   const ownDirty = git.dirty.filter((file) => coversPath(task.writes, file, `${origin}.writes`, `${origin}.git.dirty`));
-  verify(
-    ownDirty.every((file) => task.ownedDirty.includes(file)),
-    "contract-invalid",
-    "写入范围内存在未分配的已有改动",
-  );
+  const unowned = unownedWriteError(task, ownDirty);
+  if (unowned) throw unowned;
   const untracked = new Set(git.shortStatus.filter((row) => row.status === "??").map((row) => row.file));
   const inheritedHiveOutputs = git.dirty.filter((file) => isUntrackedHiveOutput(task, file, untracked));
   const ignored = new Set(inheritedHiveOutputs);

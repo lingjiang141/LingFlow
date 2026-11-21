@@ -1,4 +1,4 @@
-import { specBoard, specChoices } from "./spec-board.js";
+import { isHistoricalTicket, specBoard, specChoices, ticketColumns } from "./spec-board.js";
 import { excerpt, handoffLines, handoffRecord } from "./handoff-card.js";
 import { formatQualitySummary, noticeQualitySummary, qualityDimensions, qualityStateLabel } from "./quality-summary.js";
 import { roleDeliveryPresentation } from "./role-delivery.js";
@@ -44,6 +44,7 @@ const status = {
   paused: "待调整调度",
   blocked: "已阻塞",
   superseded: "已被替代",
+  abandoned: "已放弃",
   waiting_verification: "待独立验证",
   waiting_batch: "等待累计验证",
   waiting_review: "等待审查",
@@ -53,7 +54,9 @@ const status = {
   trial: "待用户试用",
   accepted: "已验收",
 };
-const taskStatus = (task) => task.blockedBy?.some(blocker => blocker.code === "bridge-tools-missing") ? "工具未恢复 · bridge-tools-missing" : (task.scopeReleased || task.releasedScope) && task.state !== "superseded" ? "范围已释放" : ["assigned", "rework"].includes(task.state) && !task.deliveredAt
+const taskStatus = (task) => isHistoricalTicket(task) ?
+  (task.state === "abandoned" || task.state === "superseded" ? status[task.state] : "范围已释放") :
+  task.blockedBy?.some(blocker => blocker.code === "bridge-tools-missing") ? "工具未恢复 · bridge-tools-missing" : ["assigned", "rework"].includes(task.state) && !task.deliveredAt
   ? "已分配 · 待送达" : status[task.state] ?? task.state;
 const roleLabels = { controller: "主控", developer: "开发", reviewer: "审查", supervisor: "监管者" };
 const legacyRoleLabels = { planner: "规划（旧角色）", tester: "测试（旧角色）" };
@@ -542,9 +545,9 @@ function detail(task) {
       form("确认旧检查已结束", [{ name: "evidence", label: "旧进程已退出、资源可安全复用的依据", multiline: true }],
         (values, op) => call("reconcileCheck", { jobId: job.id, ...values }, op))));
   }
-  if (task.state === "ready" && task.verification)
+  if (task.state === "ready" && task.verification && !isHistoricalTicket(task))
     $("fields").append(node("p", "等待 DSH 主控核对证据并汇总试用步骤。", "muted"));
-  if (task.state === "ready" && task.readOnly)
+  if (task.state === "ready" && task.readOnly && !isHistoricalTicket(task))
     actions.append(
       button("主控汇总试用", () =>
         form(
@@ -560,7 +563,7 @@ function detail(task) {
         ),
       ),
     );
-  if (task.state === "trial" && (task.readOnly || task.verification))
+  if (task.state === "trial" && (task.readOnly || task.verification) && !isHistoricalTicket(task))
     actions.append(
       button("记录业务验收", () =>
         form(
@@ -763,24 +766,20 @@ function render() {
     specSelection.set(projectId, picker.value);
     render();
   };
-  const count = (field, value) => visibleTasks.filter((task) => task[field] === value).length;
+  const currentTasks = visibleTasks.filter(task => !isHistoricalTicket(task));
+  const count = (field, value) => currentTasks.filter((task) => task[field] === value).length;
   const risks = Object.entries(riskLabels).map(([risk, label]) => label + " " + count("risk", risk));
   $("spec-summary").textContent = [
     selected?.kind === "cycle" ? `规格周期 · ${selected.versions.length} 个冻结版本` : selected ? "冻结版本 " + selected.digest.slice(0, 8) : !current ? "尚无已登记规格" : null,
-    "已验收 " + count("state", "accepted") + "/" + visibleTasks.length + " 张",
+    "已验收 " + count("state", "accepted") + "/" + currentTasks.length + " 张",
     ...risks,
+    currentTasks.length < visibleTasks.length ? `历史 ${visibleTasks.length - currentTasks.length} 张` : null,
     selected ? "只统计已登记票，未登记草稿不计入" : !current && picker.value !== "all" ? "下方显示全部任务" : null,
   ].filter(Boolean).join(" · ");
-  const groups = [
-    ["进行中", ["queued", "assigned", "rework", "paused", "blocked"]],
-    ["审查与处理", ["waiting_review", "waiting_verification", "waiting_batch", "reviewing", "changes_requested"]],
-    ["交付与验收", ["ready", "trial", "accepted", "superseded"]],
-  ];
   $("board").replaceChildren(
-    ...groups.map(([title, states]) => {
+    ...ticketColumns(visibleTasks).map(({ title, tasks, historyCount = 0 }) => {
       const column = node("div", undefined, "column");
-      const tasks = visibleTasks.filter((t) => states.includes(t.state));
-      column.append(node("h3", title + " · " + tasks.length));
+      column.append(node("h3", title + " · " + (tasks.length - historyCount) + (historyCount ? ` · 历史 ${historyCount}` : "")));
       const list = node("div", undefined, "task-list");
       column.append(list);
       if (!tasks.length) list.append(node("p", "暂无任务", "muted"));

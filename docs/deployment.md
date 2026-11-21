@@ -48,7 +48,7 @@ node scripts/register-dsh.mjs --profile "D:\YourDSHProfile\cordis.patch.yml" --a
 npm ci
 node scripts/export-project.mjs E:\Releases\LingFlow-source
 node scripts/build-portable.mjs E:\Releases\LingFlow-win-x64
-npm run build:installer -- E:\Releases\LingFlow-win-x64 E:\Releases\LingFlow-0.2.0-win-x64-Setup.exe
+npm run build:installer -- E:\Releases\LingFlow-win-x64 E:\Releases\LingFlow-0.2.1-win-x64-Setup.exe
 ```
 
 目标必须是源码外的新目录，脚本拒绝覆盖。导出只包含明确允许的产品代码、测试、技能、通用文档与第三方声明；排除 `.git`、依赖、真实数据、`.validation`、自定义背景与本机诊断文档。`RELEASE-MANIFEST.json` 列出源码文件、大小和 SHA-256。便携构建在 Windows x64 上使用锁定版 Electron，按 `resources/app` 目录方式封装，后台 worker 保持为真实文件。

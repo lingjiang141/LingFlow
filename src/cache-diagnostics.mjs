@@ -1,3 +1,5 @@
+import { wakeGeneration } from "./wake-state.mjs";
+
 export function promptMetrics(text, contextFull, toolsVersion = null) {
   const digest = text.lastIndexOf('\n\n当前状态\n当前状态（自动生成，勿手工核对以下事实）');
   const boundary = digest < 0 ? text.indexOf('当前事项\n') : digest + 2;
@@ -8,7 +10,7 @@ export function promptMetrics(text, contextFull, toolsVersion = null) {
 
 export function recordPromptAdmission(state, wake, at) {
   state.promptAdmissions ??= [];
-  const generation=wake.deliveryRetry??0;
+  const generation = wakeGeneration(wake);
   if (state.promptAdmissions.some(item => item.wakeId === wake.id&&(item.generation??0)===generation)) return;
   state.promptAdmissions = state.promptAdmissions.filter(item => item.at >= at - 7 * 86400000);
   state.promptAdmissions.push({ wakeId: wake.id, generation, roleId: wake.roleId, sessionId: wake.sessionId, at,

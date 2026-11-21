@@ -5,7 +5,6 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fixture } from './helpers/evidence-fixture.mjs';
 import { selectWakeNotices } from '../src/controller-notices.mjs';
-import { wakeText } from '../src/role-context.mjs';
 import { checkEvidenceFacts } from '../src/check-evidence.mjs';
 import { reconcileRoleDuplicates } from '../src/role-duplicates.mjs';
 import { assertStoppedTask } from '../src/task-scope.mjs';
@@ -41,7 +40,7 @@ test('remaining F14/F15 fields expose a copyable missing-id example, omission co
   assert.ok(Buffer.byteLength(JSON.stringify(view))<190000);
 });
 
-test('context updates are ledger-only and next real wake has explicit counts and a version stamp', async t => {
+test('context updates stay in the ledger until the next business wake leads to inbox', async t => {
   const f=await fixture(t);f.wf.execution={wakeCoalesceMs:0};
   const lead=f.roles.find(role=>role.kind==='controller');
   f.store.change(s=>{s.roles.find(role=>role.id===lead.id).contextRevision=2;f.wf.notice(s,lead.id,'context:2','context updated');});
@@ -49,7 +48,8 @@ test('context updates are ledger-only and next real wake has explicit counts and
   const note=f.store.read().notices.find(note=>note.key==='context:2');assert.equal(note.actionable,false);
   f.call('Dev','question',{taskId:f.taskId,text:'real blocker'});
   const wake=f.wf.heartbeat(sessions(f)).deliveries.find(wake=>wake.roleId===lead.id);
-  assert.match(wake.text,/^actionable: true.*notices: 2/m);assert.match(wake.text,/context:v2 policy:v/);
+  assert.equal(wake.contextRevision,2);assert.equal(wake.noticeIds.length,2);
+  assert.match(wake.text,/real blocker/);assert.doesNotMatch(wake.text,/context:v|context updated|actionable/);
   assert.equal(f.store.read().roles.find(role=>role.id===lead.id).seenContextRevision,1);
 });
 
@@ -105,16 +105,16 @@ test('an admitted dependency keeps its historical proof on rescheduling but reje
   f.wf.heartbeat(sessions(f));assert.equal(f.store.read().tasks[1].state,'queued');
 });
 
-test('cache diagnostics count only actual admissions and include stable/full bytes without depending on inbox', async t => {
+test('cache diagnostics count actual short-card admissions and their bytes before inbox is read', async t => {
   const f=await fixture(t);f.wf.execution={wakeCoalesceMs:0};const lead=f.roles.find(role=>role.kind==='controller');
   f.store.change(s=>{const role=s.roles.find(role=>role.id===lead.id);delete role.seenContextRevision;delete role.seenSupervisionPolicy;f.wf.notice(s,lead.id,'message:first','user message');});
   const first=f.wf.heartbeat(sessions(f)).deliveries.find(wake=>wake.roleId===lead.id);
-  assert.equal(first.contextFull,true);assert.equal(first.promptBytes,Buffer.byteLength(first.text));assert.ok(first.stableBytes>0);assert.ok(first.toolsVersion);
+  assert.equal(first.contextFull,false);assert.equal(first.promptBytes,Buffer.byteLength(first.text));assert.ok(first.stableBytes>0);assert.ok(first.toolsVersion);
   f.wf.acknowledge(first.id,'Lead');f.wf.acknowledge(first.id,'Lead');
-  const member=f.store.read().roles.find(role=>role.id===lead.id);const project=f.store.read().projects[0];
-  assert.ok(Buffer.byteLength(wakeText(project,member,true,'next',f.store.read()))<first.promptBytes);
+  const member=f.store.read().roles.find(role=>role.id===lead.id);
+  assert.equal(member.seenContextRevision,undefined);
   const diagnostic=f.call('Lead','cacheDiagnostics',{roleId:lead.id,last24h:true});
-  assert.equal(diagnostic.deliveries,1);assert.equal(diagnostic.contextFullCount,1);assert.equal(diagnostic.averagePromptBytes,first.promptBytes);
+  assert.equal(diagnostic.deliveries,1);assert.equal(diagnostic.contextFullCount,0);assert.equal(diagnostic.averagePromptBytes,first.promptBytes);
   assert.equal(f.call('Dev','cacheDiagnostics',{roleId:lead.id}).error,undefined);
 });
 

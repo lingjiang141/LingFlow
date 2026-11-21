@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { fixture } from './helpers/evidence-fixture.mjs';
 import { createRelay } from '../adapters/dsh/relay.mjs';
 import { startServer } from '../src/server.mjs';
-import { normalizeWake, consumeWake } from '../src/wake-state.mjs';
+import { normalizeWake, consumeWake, wakeGeneration } from '../src/wake-state.mjs';
 import { roleDeliveryPresentation } from '../ui/role-delivery.js';
 
 const sessions=f=>f.roles.map(role=>({id:role.name,state:'idle',pending:0,jobs:0}));
@@ -117,10 +117,11 @@ test('A: an enqueued controller wake merges a new report within 30 seconds and r
   const wake=f.wf.heartbeat(sessions(f),now+26000).deliveries.find(wake=>wake.roleId===lead.id);
   assert.ok(wake,'new report must not stay behind enqueued context');
   assert.equal(wake.id,'old-enqueued');assert.equal(wake.state,'pending');assert.ok(wake.mergedNoticeIds.length);
-  assert.match(wake.text,/actionable: true/);assert.ok(wake.text.includes('R35-04')&&wake.text.includes(f.taskId)&&wake.text.includes('abcdef012345'));
+  assert.match(wake.text,/R35-04[\s\S]*新报告等待独立验证/);
+  assert.doesNotMatch(wake.text,/abcdef012345|taskId=/);
   assert.equal(f.wf.acknowledge(wake.id,'Lead','dsh',{generation:0,attempt:1}).state,'obsolete');
   assert.equal(f.store.read().wakes.find(item=>item.id===wake.id).state,'pending');
-  console.log('A '+JSON.stringify({elapsedHeartbeatMs:26000,wakeId:wake.id,generation:wake.deliveryRetry,actionable:true,ticket:'R35-04',candidate:'abcdef012345'}));
+  console.log('A '+JSON.stringify({elapsedHeartbeatMs:26000,wakeId:wake.id,generation: wakeGeneration(wake),actionable:true,ticket:'R35-04',candidate:'abcdef012345'}));
 });
 
 test('B: blocked new notifications have one explicit suppression event and never stall another role',async t=>{
@@ -137,14 +138,18 @@ test('B: blocked new notifications have one explicit suppression event and never
 
 test('C/E: a 130-second unconsumed admission is retried automatically and wake health clears on handoff',async t=>{
   const f=await fixture(t);const {lead}=seed(f,130000);
+  f.store.change(state => {
+    const wake = state.wakes.find(item => item.id === 'old-enqueued');
+    state.notices.find(notice => wake.noticeIds.includes(notice.id)).key = 'message:unconsumed';
+  });
   const listedBefore=f.call('Lead','list'),before=listedBefore.roles.find(role=>role.id===lead.id).wakeHealth;
   assert.equal(before.stuck,1);assert.ok(before.oldestStuckAgeMs>=130000);
   assert.equal(listedBefore.tasks[0].wakeHealth.stuck,1);
   const wake=f.wf.heartbeat(sessions(f)).deliveries.find(wake=>wake.roleId===lead.id);
   assert.ok(wake);assert.ok(wake.handedOffAt);assert.ok(wake.deliveryAttempts>=1);
   const lost=events(f,'wake.delivery_lost').find(event=>event.wakeId===wake.id);assert.ok(lost.ageMs>=130000);
-  assert.match(wake.text,/actionable: true/);
-  f.wf.acknowledge(wake.id,'Lead','dsh',{generation:wake.deliveryRetry,attempt:1});
+  assert.match(wake.text,/团队消息/);
+  f.wf.acknowledge(wake.id,'Lead','dsh',{generation: wakeGeneration(wake),attempt:1});
   const current=f.store.read().wakes.find(item=>item.id===wake.id);assert.ok(current.handedOffAt);assert.equal(current.deliveryAttempts,2);
   const listedAfter=f.call('Lead','list'),after=listedAfter.roles.find(role=>role.id===lead.id).wakeHealth;assert.equal(after.stuck,0);assert.ok(after.lastDeliveredAt);
   assert.equal(listedAfter.tasks[0].wakeHealth.stuck,0);
@@ -156,7 +161,7 @@ test('a successful frozen check acknowledges the assigned dispatch without readi
   const f = await fixture(t);
   const first = f.wf.heartbeat(sessions(f)).deliveries.find(wake => wake.sessionId === 'Dev');
   assert.ok(first);
-  f.wf.acknowledge(first.id, 'Dev', 'dsh', { generation: first.deliveryRetry, attempt: 1 });
+  f.wf.acknowledge(first.id, 'Dev', 'dsh', { generation: wakeGeneration(first), attempt: 1 });
   const receipt = f.call('Dev', 'check', { taskId: f.taskId, checkId: 'red', async: true }, 'start-original-ticket');
   assert.ok(receipt.jobId);
   const after = f.store.read();
@@ -182,7 +187,7 @@ test('reading the assigned ticket confirms only its dispatch and leaves unrelate
   f.call('Dev', 'inspect', { taskId: f.taskId, section: 'events' });
   assert.equal(events(f, 'wake.work-confirmed').length, 0);
   f.call('Dev', 'inspect', { taskId: f.taskId });
-  assert.equal(f.wf.validWake(first.id, 'Dev', first.deliveryRetry).valid, false);
+  assert.equal(f.wf.validWake(first.id, 'Dev', wakeGeneration(first)).valid, false);
   const replacement = f.wf.heartbeat(sessions(f)).deliveries.find(wake => wake.sessionId === 'Dev');
   assert.ok(replacement);
   const message = f.store.read().notices.find(note => note.key === 'message:separate');
@@ -202,7 +207,7 @@ test('a reviewer reading the assigned candidate stops the wake through the worke
   });
   const first = f.wf.heartbeat(sessions(f)).deliveries.find(wake => wake.sessionId === 'Review');
   assert.ok(first);
-  f.wf.acknowledge(first.id, 'Review', 'dsh', { generation: first.deliveryRetry, attempt: 1 });
+  f.wf.acknowledge(first.id, 'Review', 'dsh', { generation: wakeGeneration(first), attempt: 1 });
   f.close();
   const app = await startServer({ dataDir: f.dir, port: 0 });
   t.after(() => app.close());
@@ -224,7 +229,7 @@ test('an unread answer in a mixed card remains pending while its developer is wo
   f.store.change(s => f.wf.notice(s, developer.id, 'answer:unread', '原票答复', f.taskId));
   const first = f.wf.heartbeat(sessions(f)).deliveries.find(wake => wake.sessionId === 'Dev');
   assert.ok(first);
-  f.wf.acknowledge(first.id, 'Dev', 'dsh', { generation: first.deliveryRetry, attempt: 1 });
+  f.wf.acknowledge(first.id, 'Dev', 'dsh', { generation: wakeGeneration(first), attempt: 1 });
   f.call('Dev', 'progress', { taskId: f.taskId, text: '正在处理原票' });
   const busy = sessions(f).map(session => session.id === 'Dev' ? { ...session, state: 'running' } : session);
   const later = Date.now() + 130000;
@@ -260,7 +265,7 @@ test('the actual relay sends a fresh generation once instead of acknowledging th
   report(f,lead);
   const next=f.wf.heartbeat(sessions(f)).deliveries.find(wake=>wake.roleId===lead.id);assert.ok(next);
   await b.relay.accept([next]);await b.relay.accept([next]);
-  assert.equal(b.calls.length,2);assert.notEqual(b.calls[0].requestId,b.calls[1].requestId);assert.match(b.calls[1].content[0].text,/abcdef012345/);
+  assert.equal(b.calls.length,2);assert.notEqual(b.calls[0].requestId,b.calls[1].requestId);assert.match(b.calls[1].content[0].text,/新报告等待独立验证/);
   assert.equal(f.call('Lead','cacheDiagnostics',{roleId:lead.id}).deliveries,2);
   console.log('relay '+JSON.stringify({prompts:b.calls.length,requestIds:b.calls.map(call=>call.requestId)}));
 });
@@ -270,9 +275,10 @@ test('a delayed old payload validation cannot authorize a changed pending body',
   f.store.change(s=>f.wf.notice(s,lead.id,'message:one','one'));
   const first=f.wf.heartbeat(sessions(f)).deliveries.find(wake=>wake.roleId===lead.id);
   report(f,lead);const next=f.wf.heartbeat(sessions(f)).deliveries.find(wake=>wake.roleId===lead.id);
-  assert.ok(next.deliveryRetry> (first.deliveryRetry??0));
-  assert.equal(f.wf.validWake(first.id,'Lead',first.deliveryRetry??0).valid,false);
-  assert.equal(f.wf.validWake(next.id,'Lead',next.deliveryRetry).valid,true);
+  assert.ok(wakeGeneration(next) > wakeGeneration(first));
+  assert.equal(next.deliveryRetry, first.deliveryRetry);
+  assert.equal(f.wf.validWake(first.id,'Lead',wakeGeneration(first)).valid,false);
+  assert.equal(f.wf.validWake(next.id,'Lead',wakeGeneration(next)).valid,true);
 });
 
 test('a real in-flight old ACK cannot consume a report merged during its network round trip',async t=>{
@@ -286,7 +292,7 @@ test('a real in-flight old ACK cannot consume a report merged during its network
   await waiting;report(f,lead);
   const next=f.wf.heartbeat(sessions(f)).deliveries.find(wake=>wake.roleId===lead.id);
   release();await inFlight;assert.equal(f.store.read().wakes.find(wake=>wake.id===next.id).state,'pending');
-  await b.relay.accept([next]);assert.equal(b.calls.length,2);assert.match(b.calls[1].content[0].text,/abcdef012345/);
+  await b.relay.accept([next]);assert.equal(b.calls.length,2);assert.match(b.calls[1].content[0].text,/新报告等待独立验证/);
 });
 
 test('HTTP and reader/writer workers carry the delivery generation through validation and ACK',async t=>{
@@ -301,13 +307,13 @@ test('HTTP and reader/writer workers carry the delivery generation through valid
   await app.workflow.call('ui','enable',{roleId:dev.id,enabled:true},'epoch-enable-dev');
   await api('call',{sessionId:'Dev',command:'question',operationId:'epoch-initial-question',args:{taskId:f.taskId,text:'第一个真实待办'}});
   const first=(await app.workflow.heartbeat(sessions(f))).deliveries.find(wake=>wake.roleId===lead.id);assert.ok(first);
-  await api('ack',{wakeId:first.id,sessionId:'Lead',delivery:{generation:first.deliveryRetry,attempt:1}});
+  await api('ack',{wakeId:first.id,sessionId:'Lead',delivery:{generation: wakeGeneration(first),attempt:1}});
   await api('call',{sessionId:'Dev',command:'question',operationId:'epoch-question',args:{taskId:f.taskId,text:'需要答复的新问题'}});
   const next=(await app.workflow.heartbeat(sessions(f))).deliveries.find(wake=>wake.roleId===lead.id);assert.ok(next);
-  assert.equal((await api('valid',{wakeId:first.id,sessionId:'Lead',generation:first.deliveryRetry})).valid,false);
-  assert.equal((await api('valid',{wakeId:next.id,sessionId:'Lead',generation:next.deliveryRetry})).valid,true);
-  assert.equal((await api('ack',{wakeId:first.id,sessionId:'Lead',delivery:{generation:first.deliveryRetry,attempt:1}})).state,'obsolete');
-  assert.equal((await api('ack',{wakeId:next.id,sessionId:'Lead',delivery:{generation:next.deliveryRetry,attempt:1}})).state,'stored');
+  assert.equal((await api('valid',{wakeId:first.id,sessionId:'Lead',generation: wakeGeneration(first)})).valid,false);
+  assert.equal((await api('valid',{wakeId:next.id,sessionId:'Lead',generation: wakeGeneration(next)})).valid,true);
+  assert.equal((await api('ack',{wakeId:first.id,sessionId:'Lead',delivery:{generation: wakeGeneration(first),attempt:1}})).state,'obsolete');
+  assert.equal((await api('ack',{wakeId:next.id,sessionId:'Lead',delivery:{generation: wakeGeneration(next),attempt:1}})).state,'stored');
 });
 
 test('legacy closed wake timestamps stay unknown until there is an actual close observation',()=>{

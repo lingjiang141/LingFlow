@@ -1,5 +1,5 @@
 import { parseCommandArgs } from './command-arguments.mjs';
-import { activeWake } from './wake-state.mjs';
+import { activeWake, selfDiagnosticNotice } from './wake-state.mjs';
 export const inspectionCommands = new Set(['inspect','list','checkStatus','checkEvidence','diagnoseTask','deliveryEvidence']);
 export const inspectionMetadata = Symbol.for('lingflow.inspection.metadata');
 export const silentResumeText = '本轮无你的责任，无需核对收件箱；如无异常请直接结束回合。';
@@ -40,6 +40,7 @@ export function selectWakeNotices(s, role, unread, { ignoreFailed = false } = {}
   for (const wake of s.wakes ?? []) if (wake.roleId === role.id && activeWake(wake))
     for (const id of wake.noticeIds) abandoned.delete(id);
   const notices = unread.filter(notice => !notice.workConfirmedAt).map(notice => {
+    if (selfDiagnosticNotice(notice)) return { ...notice, actionable: false, suppress: true, suppressionReason: "wake-diagnostic" };
     const silent = isSilentNotice(role, notice);
     const kind = notice.key.split(':')[0], ref = notice.key.split(':')[1];
     const task = s.tasks.find(task => task.id === notice.taskId);

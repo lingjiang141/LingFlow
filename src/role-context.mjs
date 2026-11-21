@@ -1,5 +1,6 @@
 import { CONTROLLER_CHECK_BOUNDARY, CONTROLLER_WAKE_BOUNDARY } from "./verification-policy.mjs";
 import { readGit } from "./quality.mjs";
+import { DSH_SUMMARY_LIMIT } from "./wake-card.mjs";
 
 export const ROLE_LABELS = Object.freeze({
   controller: "主控",
@@ -125,7 +126,7 @@ export const CONTROLLER_TURN_RULE = [
   "派发用 dispatchPlan。独立票分给不同空闲成员，只填真实前置和共享资源。技术前置用 verified；用户明确要求逐票试用后才用 accepted。系统自动准入和投递，受理后按 blockedBy 或送达回执处理。",
   "用 schema 推荐责任人并核对共享资源 warning。开发检查由接票后才能确定时，在票面选择 developerChecks:true，先冻结 AC、范围、资源和适用主控探针。",
   "本次决定缺事实时只核对相关原票。例外先用 diagnoseTask，恢复用 unblock；收到待确认提交时核对实际归属。普通沟通用 message，答复明确阻塞用 answer。只有收到当前候选的用户试用结论后，才用 accept 记录证据。操作不明时用原 operationId 查回执。",
-  "完成可独立推进的事项后结束本轮，等 LingFlow 回投。等待期间禁止轮询、休眠、定时任务及安排其他成员代等。",
+  "拿到派单回执后继续可独立推进的事项。无独立事项就结束本轮，等 LingFlow 自动回投成员报告。禁止用 wait_agent、轮询、休眠、定时任务或其他代理代等。",
 ].join("\n");
 
 export const CONTROLLER_POLICY = [
@@ -208,6 +209,15 @@ const summarySuffix = "…完整事项见 inbox。";
 const stateHeading = "\n\n当前状态\n";
 function fitSummary(summary, limit) {
   return summary.length <= limit ? summary : summary.slice(0, Math.max(0, limit - summarySuffix.length)) + summarySuffix;
+}
+
+export function dshWakeText(project, role, summary) {
+  const title = `LingFlow · ${project.name.replace(/\s+/g, " ").slice(0, 44)} · ${role.name.replace(/\s+/g, " ").slice(0, 26)}`;
+  const next = role.kind === "supervisor"
+    ? "用 lingflow_team 的 inbox 阅读监管频道原文。"
+    : "用 lingflow_team 的 inbox 读取职责和完整事项，按需 inspect 原票。没有可执行事项就结束本轮。";
+  return [title, role.kind === "controller" && CONTROLLER_WAKE_BOUNDARY, next].filter(Boolean).join("\n\n") +
+    summaryHeading + fitSummary(summary, DSH_SUMMARY_LIMIT);
 }
 
 export function wakeText(project, role, isPrimary, summary, state) {

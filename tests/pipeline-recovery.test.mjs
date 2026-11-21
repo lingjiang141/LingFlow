@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fixture } from "./helpers/evidence-fixture.mjs";
 import { wakeDelay } from "../src/wake-policy.mjs";
-import { wakeText, markContextSeen } from "../src/role-context.mjs";
+import { dshWakeText, markContextSeen } from "../src/role-context.mjs";
 import { installTools, installedToolsVersion } from "../adapters/dsh/tool-registration.mjs";
 import { prepareCheck, artifactsIntact } from "../src/check-preparation.mjs";
 import { inspectRole } from "../src/patrol.mjs";
@@ -38,19 +38,21 @@ test("patrol continuation limit persists task deliveryIssue", () => {
   assert.equal(task.deliveryIssue.reason,"continuation-limit");
 });
 
-test("wake acknowledgement marks actual recipient, later wake is compact",async t=>{
+test("DSH wake acknowledgement leaves role context for inbox and card prefix stays stable",async t=>{
   const f=await fixture(t);
   f.store.change(s=>{const role=s.roles.find(role=>role.kind==="controller");delete role.seenContextRevision;delete role.seenSupervisionPolicy; f.wf.notice(s,role.id,"custom:1","one");});
   const sessions=f.roles.map(role=>({id:role.name,state:"idle",pending:0,jobs:0}));
   const wake=f.wf.heartbeat(sessions).deliveries.find(w=>w.sessionId==="Lead");
-  assert.match(wake.text,/角色身份/);
+  assert.match(wake.text,/inbox 读取职责/);assert.doesNotMatch(wake.text,/角色身份/);
   f.wf.acknowledge(wake.id,"Lead");
-  const role=f.store.read().roles.find(role=>role.kind==="controller");
-  assert.equal(role.seenContextRevision,1);
+  assert.equal(f.store.read().roles.find(role=>role.kind==="controller").seenContextRevision,undefined);
+  assert.equal(f.call("Lead","inbox").context.revision,1);
+  assert.equal(f.call("Lead","inbox").context,undefined);
   const state=f.store.read();
-  const compact=wakeText(state.projects[0],role,true,"one",state);
+  const role=state.roles.find(role=>role.kind==="controller");
+  const compact=dshWakeText(state.projects[0],role,"one");
   assert.ok(compact.length<800);assert.doesNotMatch(compact,/角色身份/);
-  const changed=wakeText(state.projects[0],role,true,"two",state);
+  const changed=dshWakeText(state.projects[0],role,"two");
   assert.equal(compact.slice(0,compact.indexOf("当前事项")),changed.slice(0,changed.indexOf("当前事项")));
 });
 
@@ -77,7 +79,8 @@ test("five status receipts stay in inbox and merge with one actionable report af
   assert.equal(f.wf.heartbeat(sessions,now+26000).deliveries.filter(w=>w.roleId===lead.id).length,0);
   f.store.change(s=>{ f.wf.notice(s,lead.id,'report:ready','report ready',f.taskId);s.notices.at(-1).at=now+6000; });
   const deliveries=f.wf.heartbeat(sessions,now+26000).deliveries.filter(w=>w.roleId===lead.id);
-  assert.equal(deliveries.length,1);assert.equal(deliveries[0].noticeIds.length,6);assert.match(deliveries[0].text,/actionable: true/);
+  assert.equal(deliveries.length,1);assert.equal(deliveries[0].noticeIds.length,6);
+  assert.match(deliveries[0].text,/开发报告已入库/);assert.doesNotMatch(deliveries[0].text,/check done/);
 });
 
 test("same-name roles merge only when identity matches and no history references the duplicate",()=>{

@@ -184,8 +184,9 @@ test("controller gets a quiet startup card and the turn rule when reading contex
   assert.equal(report.state, "stored");
   assert.deepEqual((await heartbeat()).map((wake) => wake.sessionId), ["controller"]);
   const followup = lastPrompt("controller");
-  assert.match(followup, /有待处理事项.*主控/);
+  assert.match(followup, /LingFlow · .*主控/);
   assert.match(followup, /开发报告已入库.*核对测试输入/);
+  assert.match(followup, /输入核对完成[\s\S]*开发自测：需求正确性 通过/);
   assert.ok(followup.length < 800);
   const inbox = await call("controller", "inbox");
   assert.equal(inbox.notices[0].taskId, dispatch.taskId);

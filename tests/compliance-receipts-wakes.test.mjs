@@ -89,9 +89,11 @@ test('pure controller status receipts never independently wake; read facts suppr
     assert.equal(heartbeat().length,0);
     assert.ok(f.call('Lead','inbox').notices.some(notice=>notice.key==='report:report-'+i));
   }
-  f.store.change(s=>{s.tasks[0].questions.push({id:'blocker',text:'需要主控答复',answer:null});f.wf.notice(s,lead.id,'question:blocker','需要主控答复',f.taskId);});
+  f.store.change(s=>{s.tasks[0].questions.push({id:'blocker',text:'需要主控答复',blocking:true,answer:null});f.wf.notice(s,lead.id,'question:blocker','需要主控答复',f.taskId);});
   f.call('Lead','list');
-  const [wake]=heartbeat(); assert.ok(wake); assert.match(wake.text,/actionable: true/); assert.match(wake.text,/主控已自查: true/);
+  const [wake]=heartbeat(); assert.ok(wake); assert.equal(wake.actionable,true);
+  assert.match(wake.text,/成员遇到阻塞[\s\S]*需要主控答复/);
+  assert.doesNotMatch(wake.text,/主控已自查|actionable/);
 });
 
 test('a new fact after an inspection remains actionable; healthy controller patrol stays quiet', () => {

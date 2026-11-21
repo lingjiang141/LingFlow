@@ -40,8 +40,14 @@ export function recoveryHint(state, task) {
     }[task.state] ?? `执行 ${inspect} 核对原票`;
     return `当前状态 ${task.state}。 ${guidance}。`;
   }
-  if (!status.silent) return `${status.blockers.map(item => item.detail).join("。") || "暂无法确认成员责任"}。执行 ${inspect} 核对当前阻塞。`;
-  return `成员已静默 ${Math.floor(status.ownerSilentForMs / 60000)} 分钟；可执行 resumeTask ${JSON.stringify({taskId:task.id,reason:"确认静默后沿原票恢复"})}，或请成员 yieldForSchedule ${JSON.stringify({taskId:task.id,reason:"已停写，交回调度"})}。`;
+  if (!status.silent) {
+    const widening = !task.readOnly && ["assigned", "rework"].includes(task.state) && status.blockers.some(item => item.code === "running-turn")
+      ? `仅扩写集时保留全部旧路径，把核对后的新增文件填进 writes，再执行 reviseSchedule ${JSON.stringify({
+        taskId: task.id, writes: task.writes, reason: "已核对新增文件和原取红范围",
+      })}。缩窄或改变其他字段时由成员停写并 yieldForSchedule。` : "";
+    return `${status.blockers.map(item => item.detail).join("。") || "暂无法确认成员责任"}。${widening}执行 ${inspect} 核对当前阻塞。`;
+  }
+  return `成员已静默 ${Math.floor(status.ownerSilentForMs / 60000)} 分钟；需要调整时先用 reviseSchedule。仅恢复原责任时可执行 resumeTask ${JSON.stringify({taskId:task.id,reason:"确认静默后沿原票恢复"})}，或请成员 yieldForSchedule ${JSON.stringify({taskId:task.id,reason:"已停写，交回调度"})}。`;
 }
 export function updateOwnerSilence(state, task, now) {
   const status = ownerStatus(state, task, now);

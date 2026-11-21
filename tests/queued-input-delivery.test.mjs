@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { createRelay } from "../adapters/dsh/relay.mjs";
+import { wakeGeneration } from "../src/wake-state.mjs";
 import { fixture } from "./helpers/evidence-fixture.mjs";
 
 async function setup(t) {
@@ -185,7 +186,8 @@ test("T5 empty queue keeps admission, retry-limit, delivery ACK and operationId 
   assert.equal(receipt.wakeId, wake.id);
   assert.deepEqual(f.resend("empty-queue-retry"), receipt);
   const [retry] = await f.pump();
-  assert.equal(retry.deliveryRetry, wake.deliveryRetry + 1);
+  assert.equal(wakeGeneration(retry), wakeGeneration(wake) + 1);
+  assert.equal(retry.deliveryRetry, wake.deliveryRetry + 1, "an explicit retry after host rejection counts");
   assert.equal(f.prompts[0].mode, "queue");
   assert.equal(f.task().deliveryState, "delivered");
 });
@@ -204,6 +206,8 @@ test("T-A1/T-A2 one wake resumes an ended idle session and drains three inputs",
   assert.deepEqual(f.turns.flat().filter(item => item.id.startsWith("host-")).map(item => item.id), ["host-one", "host-two", "host-three"]);
   await f.pump(telemetry, now + 8000);
   assert.equal(f.role().pendingInputCount, 0);
+  assert.equal(f.role().seenContextRevision, null);
+  assert.ok(f.call("Dev", "inbox").context);
   assert.ok(f.role().seenContextRevision);
   assert.ok(f.task().deliveredAt);
   assert.deepEqual(f.task().blockers, []);

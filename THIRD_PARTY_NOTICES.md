@@ -2,6 +2,10 @@
 
 根目录的 MIT 许可证适用于 LingFlow 自编代码，不重新许可第三方代码、形象或动画。
 
+## Hive 项目致谢
+
+感谢 [Hive（tt-a1i/hive）](https://github.com/tt-a1i/hive) 及其贡献者。Hive 为 LingFlow 的基本设计思想和基础架构提供了榜样，包括本地多 Agent 工作台、主控与成员协作以及派单、审查与回报流程。LingFlow 面向 DSH 独立实现。Hive 的代码与许可声明见其原仓库。
+
 ## 桌宠素材
 
 素材来自 [hunmer/aboutme-pets](https://github.com/hunmer/aboutme-pets/tree/ee29ca4abb489e9257f41ab889a1db115323a267)。完整署名与来源见 [desktop/pet-assets/ATTRIBUTION.md](desktop/pet-assets/ATTRIBUTION.md)，随包的原始声明必须保留。按需下载的动作同样适用这些限制。

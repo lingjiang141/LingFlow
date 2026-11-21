@@ -83,7 +83,18 @@ test("a changed ticket and a dirty worktree cannot use the unchanged-source proo
   const args = { taskId: f.taskId, expectedBase: f.task().baseline.head, expectedHead: gitState(f.root).head,
     confirmPaths: [], confirmRecordedBaseline: { [file]: sourceFileFingerprint(file, Buffer.from(changed)) }, reason: "核对票面" };
   assert.throws(() => f.call("Lead", "rebindCommittedWork", args), /无法证明已入库规划记录/);
+  const blocked = f.call("Lead", "diagnoseTask", { taskId: f.taskId });
+  assert.equal(blocked.classification, "baseline-drift-blocked");
+  assert.equal(blocked.nextAction, null, "diagnosis must not auto-release or auto-dispatch");
+  assert.deepEqual(blocked.scopeRemedies.map(item => [item.command, item.requiredParameters]),
+    [["supersede", ["supersededBy", "reason"]], ["releaseSchedule", ["reason"]]]);
+  f.store.change(s => { Object.assign(s.tasks.find(task => task.id === f.taskId), { state: "trial", assignee: null }); });
+  const trial = f.call("Lead", "diagnoseTask", { taskId: f.taskId });
+  assert.equal(trial.classification, "baseline-drift-blocked");
+  assert.equal(trial.actionRequired.command, "supersede");
+  assert.equal(trial.nextAction, null);
 
+  f.store.change(s => { s.tasks.find(task => task.id === f.taskId).state = "paused"; });
   f.put(file, original);
   commit(f, file);
   f.put(file, changed);

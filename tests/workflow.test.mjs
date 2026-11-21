@@ -256,8 +256,8 @@ test("busy sessions queue zero prompts; one wake merges many business notices", 
     .heartbeat()
     .deliveries.filter((w) => w.roleId === f.roles[0].id);
   assert.equal(first.length, 1);
-  assert.match(first[0].text, /成员遇到阻塞.*测试任务.*共 10 条/);
-  assert.match(first[0].text, /下一步：查看问题并沿原票答复/);
+  assert.match(first[0].text, /成员提问.*测试任务.*共 10 条/);
+  assert.match(first[0].text, /阻塞 9/);
   assert.equal(
     f.heartbeat().deliveries.find((w) => w.roleId === f.roles[0].id).id,
     first[0].id,
@@ -366,25 +366,25 @@ test("DSH wake text distinguishes dispatch, review, review outcome and rework", 
   const { taskId } = f.dispatch({ title: "修复积分扣减" });
   const wakeFor = (session) => f.heartbeat().deliveries.find((wake) => wake.sessionId === session)?.text;
   assert.match(wakeFor("开发一"), /新开发任务.*修复积分扣减/);
-  assert.match(wakeFor("开发一"), /下一步：查看原票范围和验收条件/);
+  assert.match(wakeFor("开发一"), /inbox 读取职责和完整事项/);
   f.call("开发一", "inbox");
   writeFileSync(path.join(f.root, "a.txt"), "candidate");
   const report = f.report(taskId);
   const task = f.store.read().tasks.find((item) => item.id === taskId);
   const reviewer = f.roles.find((role) => role.id === task.assignee);
   assert.match(wakeFor(reviewer.name), /新独立审查.*修复积分扣减/);
-  assert.match(wakeFor(reviewer.name), /下一步：核对当前候选、原需求、差异和检查证据/);
+  assert.match(wakeFor(reviewer.name), /inbox 读取职责和完整事项/);
   f.call(reviewer.name, "inbox");
   f.call(reviewer.name, "review", {
     taskId, candidate: report.candidate, verdict: "changes",
     findings: "扣减缺少余额不足的回归用例",
   });
   assert.match(wakeFor("主控"), /审查要求返工.*修复积分扣减/);
-  assert.match(wakeFor("主控"), /摘要：扣减缺少余额不足的回归用例/);
-  assert.match(wakeFor("主控"), /下一步：查看阻塞发现，在原票安排返工/);
+  assert.match(wakeFor("主控"), /扣减缺少余额不足的回归用例/);
+  assert.match(wakeFor("主控"), /缺陷沿原票回投责任开发/);
   f.call("主控", "inbox");
   f.call("主控", "rework", { taskId, reason: "补余额不足的回归用例" });
-  assert.match(wakeFor("开发一"), /返工续接.*修复积分扣减[\s\S]*摘要：补余额不足的回归用例/);
+  assert.match(wakeFor("开发一"), /返工续接.*修复积分扣减[\s\S]*补余额不足的回归用例/);
 });
 test("a waiting candidate wakes a newly enabled reviewer immediately, unlike routine changes", (t) => {
   const f = setup(t);
@@ -472,7 +472,7 @@ test("member prompt is delivered once per revision without changing the bound se
   const laterWake = f
     .heartbeat()
     .deliveries.find((w) => w.roleId === developer.id);
-  assert.match(laterWake.text, /有待处理事项/);
+  assert.match(laterWake.text, /新开发任务/);
   assert.doesNotMatch(laterWake.text, /键盘交互/);
 });
 test("each re-enable with responsibility redelivers unchanged context once without duplicating the wake", (t) => {
@@ -490,7 +490,8 @@ test("each re-enable with responsibility redelivers unchanged context once witho
     f.call("ui", "enable", { roleId, enabled: false });
     f.call("ui", "enable", { roleId, enabled: true }, operationId);
     const [wake] = f.heartbeat().deliveries.filter((w) => w.roleId === roleId);
-    assert.match(wake.text, /角色上下文/);
+    assert.match(wake.text, /沿原责任续接/);
+    assert.doesNotMatch(wake.text, /角色上下文|保留测试证据/);
     f.call("ui", "enable", { roleId, enabled: true }, operationId);
     assert.deepEqual(
       f
@@ -520,11 +521,9 @@ test("startup uses role defaults, live bindings and updated personal prompts", (
     f.call("ui", "enable", { roleId: role.id, enabled: false });
     f.call("ui", "enable", { roleId: role.id, enabled: true });
     const [wake] = f.heartbeat().deliveries.filter((w) => w.roleId === role.id);
-    assert.match(wake.text, identity);
-    assert.ok(wake.text.includes("projectId=" + f.project.id));
-    assert.ok(wake.text.includes("roleId=" + role.id));
-    assert.ok(wake.text.includes(f.root));
-    assert.doesNotMatch(wake.text, /undefined|hive_team/);
+    assert.match(wake.text, /待回答问题/);
+    assert.doesNotMatch(wake.text, /undefined|hive_team|projectId=|roleId=|角色身份/);
+    assert.ok(!wake.text.includes(f.root));
     assert.match(f.call(role.name, "context").identityPrompt, identity);
   }
   assert.equal(f.wf.snapshot().roles.find((role) => role.id === lead.id).identityPrompt, "");
@@ -533,8 +532,8 @@ test("startup uses role defaults, live bindings and updated personal prompts", (
   f.call("ui", "editRole", { roleId: lead.id, identityPrompt: "主控个人提醒" });
   const newWake = f.heartbeat().deliveries.find((w) => w.roleId === lead.id);
   assert.equal(newWake.id, oldWake.id);
-  assert.match(newWake.text, /主控个人提醒/);
-  assert.match(newWake.text, /项目主控准则/);
+  assert.doesNotMatch(newWake.text, /主控个人提醒|项目主控准则/);
+  assert.match(newWake.text, /缺陷沿原票回投责任开发/);
   const context = f.call("主控", "inbox").context;
   assert.equal(context.identityPrompt, "主控个人提醒");
   assert.equal(context.duties, "项目主控准则");
@@ -732,7 +731,7 @@ test("restarting and reopening replaces an abandoned wake, but keeps the origina
   assert.deepEqual(heartbeat(live("idle", 1)), []);
   const [wake] = heartbeat(live("idle"));
   assert.notEqual(wake.id, original.id);
-  assert.match(wake.text, /沿原责任续接/);
+  assert.match(wake.text, /继续核对原责任/);
   assert.equal(wf.validWake(original.id, role.name).valid, false);
   assert.equal(wf.acknowledge(original.id, role.name).state, "obsolete");
   assert.equal(heartbeat(live("idle"))[0].id, wake.id);
@@ -766,7 +765,7 @@ test("manual continuation after cancellation recovers a read event and an unfini
   assert.equal(status(), "pending");
   f.wf.acknowledge(card.id, lead.name);
   assert.equal(status(), "delivered");
-  assert.match(card.text, /沿原责任续接/);
+  assert.match(card.text, /新增未读问题/);
   const { notices, recovery } = f.call(lead.name, "inbox");
   assert.equal(status(), "read");
   assert.equal(notices.filter((notice) => notice.key.startsWith("resume:")).length, 1);

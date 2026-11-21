@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { specBoard } from "../ui/spec-board.js";
+import { specBoard, ticketColumns } from "../ui/spec-board.js";
 
 const ticket = (id, digest, projectId = "a", state = "queued", risk = "medium") => ({
   id, projectId, state, risk, ...(digest ? { sources: { spec: { file: "spec.md", digest } } } : {}),
@@ -21,6 +21,23 @@ test("legacy tasks stay visible when the project has no registered spec", () => 
   const board = specBoard(tasks, "a");
   assert.equal(board.current, undefined);
   assert.deepEqual(board.tasks, [tasks[0]]);
+});
+
+test("released tickets leave the active columns and follow delivered tickets as history", () => {
+  const tasks = [
+    { id: "released-pause", state: "paused", releasedScope: { reason: "保留历史" } },
+    { id: "abandoned", state: "abandoned" },
+    { id: "paused", state: "paused" },
+    { id: "released-review", state: "reviewing", scopeReleased: true },
+    { id: "reviewing", state: "reviewing" },
+    { id: "trial", state: "trial" },
+    { id: "superseded", state: "superseded" },
+  ];
+  const columns = ticketColumns(tasks);
+  assert.deepEqual(columns.map(column => column.tasks.map(({ id }) => id)), [
+    ["paused"], ["reviewing"], ["trial", "released-pause", "released-review", "superseded", "abandoned"],
+  ]);
+  assert.equal(columns[2].historyCount, 4);
 });
 
 test("a Spec cycle shows its original five tickets and all three additions across frozen revisions", () => {

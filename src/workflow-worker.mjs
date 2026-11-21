@@ -38,7 +38,8 @@ parentPort.on("message", ({ id, method, args, trackProgress, timeoutMs }) => {
     }
     parentPort.postMessage({ id, result, inspection: result?.[inspectionMetadata] });
   } catch (error) {
-    parentPort.postMessage({ id, error: error.message, verificationCode: error.verificationCode, violations: error.violations, nextAction: error.nextAction });
+    parentPort.postMessage({ id, error: error.message, verificationCode: error.verificationCode, violations: error.violations,
+      nextAction: error.nextAction, unownedWrites: error.unownedWrites, blockers: error.blockers });
   }
 });
 parentPort.postMessage({ ready: true });
