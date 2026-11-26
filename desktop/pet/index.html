@@ -10,10 +10,16 @@
 <body>
   <main id="stage" class="stage">
     <header id="overview" class="overview surface" hidden>
-      <div class="heading"><span class="brand">◈ LINGFLOW</span><span id="connection" class="connection">实时同步</span><button id="close" aria-label="收起状态概览">×</button></div>
-      <div class="selectors"><select id="project" aria-label="项目"></select><span class="divider">/</span><select id="spec" aria-label="Spec"></select></div>
-      <div class="progress-line"><span id="progress-label">尚无已登记规格</span><strong id="percentage">0<span>%</span></strong></div>
-      <div class="progress-track"><div id="progress-fill"></div></div>
+      <div class="heading"><span class="brand"><i class="brand-mark">◈</i>LINGFLOW</span><span id="connection" class="connection">实时同步</span><button id="close" aria-label="收起状态概览">×</button></div>
+      <div class="overview-body">
+        <div class="overview-main">
+          <div class="selectors"><select id="project" aria-label="项目"></select><span class="divider">/</span><select id="spec" aria-label="Spec"></select></div>
+          <div class="progress-line"><span id="progress-label">尚无已登记规格</span></div>
+          <div class="progress-track"><div id="progress-fill"></div><div id="progress-accepted"></div></div>
+          <div class="legend"><span class="legend-closed">已收口</span><span class="legend-accepted">已验收</span></div>
+        </div>
+        <div id="ring" class="ring"><strong id="percentage">0<span>%</span></strong></div>
+      </div>
     </header>
     <div class="orbit" aria-hidden="true" hidden><i></i><i></i><i></i></div>
     <div id="pet-wrap" class="pet-wrap">

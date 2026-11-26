@@ -1,3 +1,4 @@
+import { reviewedRisk } from "./helpers/evidence-fixture.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { unlinkSync, writeFileSync } from "node:fs";
@@ -26,9 +27,9 @@ async function rawTrial() {
     const report = f.call("Dev", "report", { taskId: f.taskId, summary: "实现已就绪", dimensions });
     f.wf.heartbeat(f.roles.map(role => ({ id: role.name, state: "idle", pending: 0, jobs: 0 })));
     f.call("Review", "inbox");
-    f.call("Review", "review", { taskId: f.taskId, candidate: report.candidate, verdict: "pass", findings: "核对真实证据", dimensions });
+    f.call("Review", "review", { taskId: f.taskId, candidate: report.candidate, verdict: "pass", findings: "核对真实证据", dimensions, riskAssessment: reviewedRisk });
     f.call("Lead", "summarize", { taskId: f.taskId, instructions: "用户按原步骤试用",
-      decision: { candidate: report.candidate, limits: "无", acceptance: [{ id: "AC1", evidence: "核对验收", checkIds: ["full"] }] } });
+      decision: { candidate: report.candidate, limits: "无", riskNote: "核对独立审查与候选回执", acceptance: [{ id: "AC1", evidence: "核对验收", checkIds: ["full"] }] } });
     assert.equal(f.store.read().tasks[0].state, "trial");
     console.log("TRIAL-FIXTURE " + JSON.stringify({ dir: f.dir, root: f.root, taskId: f.taskId, testFile: f.testFile }));
   } finally {
@@ -38,7 +39,7 @@ async function rawTrial() {
 
 function openRawTrial(t) {
   const fixtureUrl = new URL("./helpers/evidence-fixture.mjs", import.meta.url);
-  const program = `import assert from "node:assert/strict"; import { fixture } from ${JSON.stringify(fixtureUrl.href)};
+  const program = `import assert from "node:assert/strict"; import { fixture, reviewedRisk } from ${JSON.stringify(fixtureUrl.href)};
     const base = ${JSON.stringify(base)}, ready = ${JSON.stringify(ready)}, assertion = ${JSON.stringify(assertion)},
       dimensions = ${JSON.stringify(dimensions)}; await (${rawTrial.toString()})();`;
   const output = execFileSync(process.execPath, ["--input-type=module", "-e", program], {
@@ -172,13 +173,13 @@ test("trial fingerprint migration validates the original candidate and requires 
   assert.notEqual(fresh.candidate, old.candidate);
   f.heartbeat();
   f.call("Review", "inbox");
-  f.call("Review", "review", { taskId, candidate: fresh.candidate, verdict: "pass", findings: "核对重新交付", dimensions });
+  f.call("Review", "review", { taskId, candidate: fresh.candidate, verdict: "pass", findings: "核对重新交付", dimensions, riskAssessment: reviewedRisk });
   f.heartbeat();
   assert.equal(f.snapshot().state, "ready");
   assert.equal(downstream().state, "assigned");
   assert.throws(blockedAccept, /汇总试用步骤/);
   assert.equal(f.call("Lead", "summarize", { taskId, instructions: "重新试用",
-    decision: { candidate: fresh.candidate, limits: "无", acceptance: [{ id: "AC1", evidence: "新候选", checkIds: ["full"] }] } }).state, "awaiting_user");
+    decision: { candidate: fresh.candidate, limits: "无", riskNote: "核对独立审查与候选回执", acceptance: [{ id: "AC1", evidence: "新候选", checkIds: ["full"] }] } }).state, "awaiting_user");
   assert.equal(f.call("ui", "accept", { taskId, evidence: "用户实际验收" }).state, "accepted");
   const event = f.store.db.prepare("SELECT kind,data FROM events WHERE kind='fingerprint.realign'").get();
   assert.equal(JSON.parse(event.data).nextAction.args.checkId, "red");

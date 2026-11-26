@@ -5,6 +5,14 @@ export const inspectionMetadata = Symbol.for('lingflow.inspection.metadata');
 export const silentResumeText = '本轮无你的责任，无需核对收件箱；如无异常请直接结束回合。';
 export const resumeText = '角色已开启或请求续接。读取收件箱内原责任和恢复索引，核对实际工作区、候选与检查回执后续接。';
 const reviewWakeKinds = /^(review|question|answer):/;
+export const admissionNoticeKind = key => /^(preflight-ready|dependency-ready):/.exec(key)?.[1];
+export const controllerPassiveNotice = notice => Boolean(admissionNoticeKind(notice.key)) ||
+  notice.key.startsWith("turn-stale:");
+export const currentCheckRevisionNotice = (task, notice) => task?.state === "paused" &&
+  task.assignee === notice.roleId && task.developerId === notice.roleId && !task.releasedScope &&
+  task.checkRevisionApproval?.id && !task.checkRevisionApproval.revokedAt &&
+  task.checkRevisionApproval.scheduleVersion === (task.scheduleVersion ?? 0) &&
+  notice.key === `check-revision-requested:${task.id}:${task.checkRevisionApproval.id}`;
 
 export function roleHasOpenResponsibility(role, state) {
   const reviewer = role.kind === 'reviewer';
@@ -12,7 +20,9 @@ export function roleHasOpenResponsibility(role, state) {
   return state.tasks.some(task => task.assignee === role.id && (['assigned', 'rework', 'reviewing'].includes(task.state) ||
     !reviewer && task.state === 'waiting_verification' && !task.candidate && task.fingerprintRecovery) &&
     (!reviewer || task.candidate && task.state === 'reviewing')) ||
-    state.notices.some(notice => notice.roleId === role.id && !notice.readAt && !notice.workConfirmedAt && wakeKinds.test(notice.key));
+    state.notices.some(notice => notice.roleId === role.id && !notice.readAt && !notice.workConfirmedAt &&
+      (wakeKinds.test(notice.key) || !reviewer && notice.key.startsWith("check-revision-requested:") &&
+        currentCheckRevisionNotice(state.tasks.find(task => task.id === notice.taskId), notice)));
 }
 
 export function isSilentNotice(role, notice) {
@@ -42,7 +52,20 @@ export function selectWakeNotices(s, role, unread, { ignoreFailed = false } = {}
   const notices = unread.filter(notice => !notice.workConfirmedAt).map(notice => {
     if (selfDiagnosticNotice(notice)) return { ...notice, actionable: false, suppress: true, suppressionReason: "wake-diagnostic" };
     const silent = isSilentNotice(role, notice);
-    const kind = notice.key.split(':')[0], ref = notice.key.split(':')[1];
+    const [kind, ref, phase] = notice.key.split(':');
+    if (controller && controllerPassiveNotice(notice)) {
+      let suppressionReason = "admission-broadcast";
+      if (kind === "turn-stale") {
+        const member = s.roles.find(member => member.id === (notice.blockedRoleId ?? ref));
+        const startedAt = notice.blockedTurnStartedAt ?? Number(phase);
+        const turn = member?.observation?.turn;
+        const active = member?.bridgePresent !== false && member?.deliveryBlock?.code === "stale-turn" &&
+          member.deliveryBlock.turnStartedAt === startedAt && turn?.startedAt === startedAt && !(turn.endedAt >= startedAt);
+        suppressionReason = active ? "stale-turn-diagnostic" : "resolved";
+      }
+      return { ...notice, actionable: false, critical: false, suppress: true,
+        suppressionReason };
+    }
     const task = s.tasks.find(task => task.id === notice.taskId);
     const checkedAt = Math.max(reads?.tasks?.[notice.taskId] ?? 0, ['check','batch'].includes(kind) ? reads?.jobs?.[ref] ?? 0 : 0);
     const controllerChecked = Boolean(controller && reads && reads.sinceInbox === (role.lastInboxAt ?? 0) &&
@@ -53,25 +76,28 @@ export function selectWakeNotices(s, role, unread, { ignoreFailed = false } = {}
       s.tasks.some(task => task.projectId === role.projectId && (task.ownerState === 'silent' || task.state === 'blocked' || task.deliveryIssue));
     const quietPatrol = controller && kind === 'patrol-resume' && !abnormal;
     const informational = controller && (['check','batch','context','git-drift'].includes(kind) || quietPatrol ||
-      ['dependency-ready','preflight-ready'].includes(kind) && !task?.deliveredAt ||
       kind === "wake-abandoned" && s.wakes.some(wake => wake.id === ref && wake.roleId === role.id));
     const noMemberWork = !controller && task && (task.state === "trial" || task.state === "accepted" ||
       task.candidate && task.developerId === role.id && !["assigned", "rework"].includes(task.state)) &&
       !["message", "question", "answer", "verification-resume"].includes(kind);
-    const resolved = kind === 'preflight' && task && !task.preflightFailure ||
+    const resolved = kind === 'check-revision-requested' && !currentCheckRevisionNotice(task, notice) ||
+      kind === 'preflight' && task && !task.preflightFailure ||
       kind === 'question' && task?.questions?.some(question => question.id === ref && question.answer) ||
       kind === 'wake-stuck' && !s.wakes.some(wake=>wake.id===ref&&wake.state!=="failed"&&wake.lostAt&&!wake.consumedAt&&!wake.supersededAt&&
         (!notice.wakeLossAt||notice.wakeLossAt===wake.lostAt));
-    const alreadyCovered = controllerChecked && !critical && kind !== 'git-drift';
+    const releasedAtTurnEnd = notice.actionable === true && (role.controllerWakeThrough ?? 0) > 0 &&
+      Math.max(checkedAt, notice.at) <= role.controllerWakeThrough;
+    const alreadyCovered = controllerChecked && !critical && kind !== 'git-drift' && !releasedAtTurnEnd;
     const abandonedDelivery = abandoned.has(notice.id);
     return { ...notice, controllerChecked, ...(silent && { silent }),
-      actionable: !silent && !informational && !noMemberWork && !abandonedDelivery, critical,
+      actionable: !silent && !informational && !noMemberWork && !abandonedDelivery && (kind !== 'check-revision-requested' || !resolved), critical,
       suppress: Boolean(noMemberWork || abandonedDelivery || resolved || quietPatrol || alreadyCovered),
       suppressionReason: noMemberWork ? "no-member-responsibility" :
         abandonedDelivery ? "delivery-loss-limit" : resolved ? "resolved" :
         quietPatrol ? "healthy-patrol" : alreadyCovered ? "controller-checked" : null };
   });
   const eligible = notices.filter(notice => !notice.suppress);
-  return { notices: eligible, actionable: eligible.some(notice => notice.actionable), suppressed: notices.length - eligible.length,
+  return { notices: eligible, diagnostics: notices.filter(notice => notice.suppressionReason === "stale-turn-diagnostic"),
+    actionable: eligible.some(notice => notice.actionable), suppressed: notices.length - eligible.length,
     suppressedNotices:notices.filter(notice=>notice.suppress).map(notice=>({id:notice.id,reason:notice.suppressionReason})) };
 }

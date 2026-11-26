@@ -23,17 +23,19 @@ async function planningFixture(t) {
   mkdirSync(path.join(f.root, "issues"));
   const sources = { spec: "spec.md", ticketsDir: "issues", attempts: "attempts.md" };
   const task = taskId => f.store.read().tasks.find(item => item.id === taskId);
-  const paper = (ticket, { after = "无", browser = false, recipe = true, developerChecks = false, risk = "高" } = {}) => {
+  const paper = (ticket, { after = "无", browser = false, recipe = true, developerChecks = false, risk = "高", riskItems } = {}) => {
     const file = browser ? "e2e/browser.spec.ts" : "e2e/verify.cjs";
     const useCase = { file, title: ticket + " 完整用例", reason: "真实浏览器行为", covers: ["AC-1"] };
     const argv = browser ? browserCheckArgv(useCase) : ["node", file];
     const checks = ["red", "green", "full"].map(stage => ({ id: stage, stage, argv, inputs: [file], covers: ["AC-1"],
       ...(stage === "red" && { expectedOutput: "AssertionError" }) }));
     const contract = { ticket, requiredWrites: ["changed.cjs"], requiredTestWrites: [file], requiredAcceptance: ["AC-1"],
+      ...(riskItems && { riskItems }),
       ...(developerChecks && { developerChecks }) };
     f.put("issues/" + ticket + ".md", [
       "# 票 " + ticket + "：新要求", "## 需求与 AC", "", "**AC-1** 可观察行为", "",
       "## 依赖与归属", "- 前置：" + after, "- 共享资源：`fixture-port`", "## riskAssessment", "**等级：" + risk + "**",
+      "风险理由：共享资源变更，需核对候选及回归",
       fence("lingflow-contract", contract), ...(recipe ? [fence("lingflow-checks", { checks, browserE2E: browser ? [useCase] : [] })] : []),
     ].join("\n"));
     return { key: ticket, developerId: member.id };
@@ -185,7 +187,8 @@ test("schema materializes a valid plan with complete AC coverage and no inline v
   const f = await planningFixture(t);
   const coordination = "本轮无额外跨票协调。\n";
   f.put(f.sources.attempts, coordination);
-  f.paper("R39-02");
+  const riskItems = [{ id: "RISK-1", reason: "复用共用入口", impact: "旧调用会受影响", coveredBy: ["AC-1"], verifiedBy: ["full"] }];
+  f.paper("R39-02", { riskItems });
   const suggested = f.call("Lead", "schema", { command: "dispatchPlan", requirementId: f.requirementId, ...f.sources });
   assert.equal(suggested.args.tickets[0].developerId, f.member.id);
   const busy = f.task(f.taskId).developerId;
@@ -196,6 +199,7 @@ test("schema materializes a valid plan with complete AC coverage and no inline v
     developerIds: { "R39-02": f.member.id } });
   assert.equal(generated.state, "valid", JSON.stringify(generated.violations));
   assert.equal(generated.args.tickets[0].verification, undefined);
+  assert.deepEqual(generated.args.tickets[0].riskItems, riskItems);
   assert.deepEqual(generated.checks[0].checks.find(check => check.stage === "full").covers, ["AC-1"]);
   assert.equal(f.call("Lead", "previewPlan", generated.args).state, "valid");
   const dispatched = f.call("Lead", "dispatchPlan", generated.args);
@@ -204,6 +208,7 @@ test("schema materializes a valid plan with complete AC coverage and no inline v
   assert.equal(f.task(f.taskId).state, "assigned");
   assert.equal(f.task(taskId).state, "assigned");
   assert.deepEqual(f.task(taskId).resources, ["fixture-port"]);
+  assert.deepEqual(f.task(taskId).riskItems, riskItems);
   const progress = "复用现有入口；先跑原票红检查，范围变化时停手。";
   assert.equal(f.call("Other", "progress", { taskId, text: progress }).state, "stored");
   assert.equal(f.task(taskId).progress, progress);

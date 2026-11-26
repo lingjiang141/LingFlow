@@ -1,3 +1,4 @@
+import { reviewedDimensions } from "./helpers/evidence-fixture.mjs";
 import assert from "node:assert/strict";
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -19,7 +20,7 @@ test("expanding the write set projects missing implementation paths into the ori
   const { tasks: [{ taskId }] } = f.call("Lead", "dispatchPlan", {
     requirementId: original.requirementId, sources: { spec: "spec.md", tickets: "tickets.md", attempts: "attempts.md" },
     tickets: [{ key: "EXPAND", developerId: original.developerId, title: "missing implementation", description: "new files",
-      risk: "high", writes: [...initial, f.testFile], reads: [], verification }],
+      risk: "high", riskReason: "多文件实施范围核对", writes: [...initial, f.testFile], reads: [], verification }],
   });
   f.put(f.testFile, "require('node:assert/strict').equal(require('node:fs').existsSync('future.cjs'), true);");
   const added = Array.from({ length: 20 }, (_, index) => `added-${index}.cjs`);
@@ -94,7 +95,7 @@ test("T-C2 an ownedDirty successor references the original genuine derived red t
   const report = f.call("Dev", "report", { taskId, summary: "承接交付", dimensions });
   assert.equal(report.redNotApplicable[0].jobId, red.id);
   assert.equal((await f.run("independent", false, "Lead", taskId)).state, "passed");
-  f.call("Lead", "summarize", { taskId, instructions: "验证承接实现", decision: { candidate: report.candidate, limits: "无",
+  f.call("Lead", "summarize", { taskId, instructions: "验证承接实现", decision: { candidate: report.candidate, limits: "无", dimensions: reviewedDimensions("full"),
     acceptance: [{ id: "AC1", evidence: "通过", checkIds: ["full"] }] } });
   assert.equal(f.call("ui", "accept", { taskId, evidence: "试用成功" }).state, "accepted");
 });

@@ -1,3 +1,4 @@
+import { reviewedDimensions } from "./helpers/evidence-fixture.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fixture } from "./helpers/evidence-fixture.mjs";
@@ -43,7 +44,7 @@ test("B: ready and trial reconcile the exact live ticket while the original cand
   f.put("tickets.md", "AC1: 用户提出不同的后续验收文本");
   assertReviewed("ready");
   f.call("Lead", "summarize", {taskId:f.taskId,instructions:"核对原要求",decision:{candidate:report.candidate,
-    acceptance:[{id:"AC1",evidence:"核对派发时的条款",checkIds:["full"]}],limits:"仅覆盖派发口径"}});
+    acceptance:[{id:"AC1",evidence:"核对派发时的条款",checkIds:["full"]}],limits:"仅覆盖派发口径", dimensions: reviewedDimensions("full")}});
   f.put("tickets.md", "AC1: 后续版本提案");
   const stale = diagnose().nextAction.args;
   f.put("tickets.md", "AC1: 后续版本提案继续修订");

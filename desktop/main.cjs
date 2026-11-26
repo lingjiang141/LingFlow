@@ -197,9 +197,37 @@ else {
             (await waitFor(() => button('暂停新投递'))).click();
             const pausePending = feedback();
             const paused = await waitFor(() => feedback()?.includes('已保留原任务') && feedback());
-            return { enablePending, silentResume, pausePending, paused };
+            (await waitFor(() => button('解绑会话'))).click();
+            const unbindConfirmation = document.getElementById('modal').innerText;
+            document.getElementById('cancel').click();
+            const cancelKeptBinding = Boolean(button('解绑会话'));
+            button('解绑会话').click();
+            document.getElementById('modal-form').requestSubmit();
+            await waitFor(() => !document.getElementById('modal').open && roleCard().textContent.includes('等待会话绑定'));
+            const canEnableAfterUnbind = Boolean(button('开启角色'));
+            return { enablePending, silentResume, pausePending, paused, unbindConfirmation, cancelKeptBinding, canEnableAfterUnbind };
           })()
         `);
+        const newBinding = await runtime.workflow.request({ roleId: customRole.id, sessionId: "desktop-reviewer-new", cwd: fixture });
+        await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            for (let attempt = 0; attempt < 80; attempt++) {
+              const confirm = [...document.querySelectorAll('#requests .binding')].find(row => row.textContent.includes('desktop-reviewer-new'))?.querySelector('button');
+              if (confirm) { confirm.click(); return; }
+              await new Promise(resolve => setTimeout(resolve, 50));
+            }
+            throw Error('新会话的绑定申请未显示');
+          })()
+        `);
+        for (let attempt = 0; attempt < 40; attempt++) {
+          const snapshot = await runtime.workflow.snapshot();
+          const member = snapshot.roles.find(role => role.id === customRole.id);
+          if (snapshot.requests.find(request => request.id === newBinding.id)?.confirmed) {
+            page.reboundMember = member.sessionId === "desktop-reviewer-new" && !member.enabled;
+            break;
+          }
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
         await captureSmokePage(mainWindow, path.join(target, "desktop.png"), screenshotErrors);
         page.deleteConfirmation = await mainWindow.webContents.executeJavaScript(`
           document.getElementById('delete-project').click();

@@ -30,6 +30,28 @@ async function setup(t) {
   return { ...f, agent, task, call, heartbeat, relay, prompts };
 }
 
+test("unbinding preserves a pending stop and the controller can resolve it separately", async t => {
+  const f = await setup(t);
+  f.heartbeat({ member: "idle" });
+  const request = f.call("Lead", "interveneTask", { mode: "stop", reason: "等待主控核对原票" }).intervention;
+  const before = f.task();
+  const result = f.wf.call("ui", "unbindRole", {
+    roleId: before.developerId, expectedSessionId: "Dev",
+  }, "unbind-pending-stop");
+  assert.equal(result.sessionId, null);
+  assert.deepEqual(f.task(), before);
+  assert.equal(f.wf.validWake(request.id, "Dev", 0).valid, false);
+  assert.equal(f.wf.acknowledge(request.id, "Dev", "dsh", { generation: 0 }).state, "obsolete");
+  const diagnosis = f.call("Lead", "diagnoseTask", {});
+  assert.equal(diagnosis.actionRequired.args.decision, "confirm-stopped");
+  assert.deepEqual(diagnosis.remedies.map(action => action.args.decision), ["withdraw"]);
+  const resolution = f.call("Lead", "resolveTaskIntervention", {
+    requestId: request.id, decision: "confirm-stopped", reason: "核对原会话",
+    evidence: "原会话已空闲，本票的写入进程和后台检查均结束",
+  });
+  assert.equal(resolution.state, "paused");
+});
+
 test("only the current ticket intervention steers a running member and records receipt separately", async t => {
   const f = await setup(t);
   const before = f.task();

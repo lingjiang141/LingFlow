@@ -1,3 +1,4 @@
+import { reviewedRisk, reviewedDimensions } from "./helpers/evidence-fixture.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -22,6 +23,7 @@ const summary = (taskId, candidate) => ({
     candidate,
     acceptance: [{ id: "AC1", evidence: "核对实际候选、验证回执和直接影响", checkIds: ["full"] }],
     limits: "无",
+    dimensions: reviewedDimensions("full"), riskNote: "核对独立审查与候选回执",
   },
 });
 
@@ -471,6 +473,41 @@ test("ownership cache protects tracked generated paths and explicit images and d
   assert.equal(committed.ownershipMetrics.invalidatedBy, "head-changed");
 });
 
+test("plan preview identifies parallel assignments only when an idle developer can take the ticket", async t => {
+  const f = await setup(t);
+  const reader = { key: "B", developerId: f.roles.DevA.id, title: "背景调查", description: "核对规划",
+    risk: "low", readOnly: true, writes: [], reads: ["spec.md"] };
+  const input = tickets => ({ requirementId: f.requirement.id, sources: f.sources, tickets });
+  const preview = async (tickets) => {
+    await f.heartbeat(["Lead", "DevA", "DevB"]);
+    const result = await f.call("Lead", "previewPlan", input(tickets));
+    assert.equal(result.state, "valid", JSON.stringify(result.violations));
+    return result.warnings.filter(warning => warning.kind === "parallel-assignment");
+  };
+  const [warning] = await preview([f.ticket, reader]);
+  assert.equal(warning.ticketKey, reader.key);
+  assert.equal(warning.parallelWith, f.ticket.key);
+  assert.equal(warning.suggestedDeveloperId, f.roles.DevB.id);
+  assert.deepEqual(await preview([f.ticket, { ...reader, developerId: warning.suggestedDeveloperId }]), []);
+  assert.deepEqual(await preview([f.ticket, { ...reader, assignmentReason: "沿用领域负责人" }]), []);
+  assert.deepEqual(await preview([f.ticket, { ...reader, after: [{ ticket: "A", stage: "verified" }] }]), []);
+  assert.deepEqual(await preview([f.ticket, { ...reader, reads: ["behavior.txt"] }]), []);
+  assert.deepEqual(await preview([f.ticket, { ...reader, reads: undefined }]), []);
+  assert.deepEqual(await preview([{ ...f.ticket, resources: ["demo-db"] }, { ...reader, resources: ["demo-db"] }]), []);
+  assert.deepEqual(await preview([f.ticket, reader, { ...reader, key: "C", developerId: f.roles.DevB.id }]), []);
+  assert.deepEqual((await f.call("Lead", "list")).tasks, []);
+
+  await f.call("ui", "enable", { roleId: f.roles.DevB.id, enabled: false });
+  assert.deepEqual(await preview([f.ticket, reader]), []);
+  await f.call("ui", "enable", { roleId: f.roles.DevB.id, enabled: true });
+  await f.heartbeat(["Lead", "DevA", "DevB"]);
+  await f.call("DevB", "inbox");
+  await f.call("Lead", "dispatchPlan", input([f.ticket]));
+  assert.equal((await preview([reader]))[0].suggestedDeveloperId, f.roles.DevB.id);
+  const { tasks: [{ taskId }] } = await f.call("Lead", "dispatchPlan", input([{ ...reader, assignmentReason: "领域负责人连续处理" }]));
+  assert.equal((await f.inspect(taskId)).assignmentReason, "领域负责人连续处理");
+});
+
 test("plan preview never dispatches, and context reads do not lock verification inputs", async (t) => {
   const f = await setup(t);
   const plan = { requirementId: f.requirement.id, sources: f.sources, tickets: [f.ticket, {
@@ -636,6 +673,7 @@ test("approved plan keeps local evidence, resumes detached checks, and releases 
   decision.decision.testReview = "对比原期望，新增错误输入反例并保留旧覆盖。";
   await f.call("Lead", "summarize", decision);
   assert.equal((await f.inspect(downstream)).state, "queued");
+  await f.heartbeat(Object.keys(f.roles));
   await f.call("ui", "accept", { taskId, evidence: "用户确认通过" });
   assert.equal((await f.inspect(downstream)).state, "assigned");
   const released = (await f.call("Lead", "inbox")).notices.filter((item) => item.taskId === downstream && item.key.startsWith("dependency-ready:"));
@@ -779,7 +817,7 @@ test("independent reviewers, controller short probes and a single cumulative rec
   const f = await setup(t);
   const high = {
     ...f.ticket,
-    risk: "high",
+    risk: "high", riskReason: "高风险闭环验证",
     verification: {
       ...f.ticket.verification,
       checks: f.ticket.verification.checks.map((check) =>
@@ -845,7 +883,9 @@ test("independent reviewers, controller short probes and a single cumulative rec
   const index = await f.call("Lead", "deliveryEvidence", { taskId: first, candidate: candidate.candidate, file: "behavior.txt" });
   assert.equal(index.change.kind, "added");
   assert.equal(index.change.content, "new");
-  assert.deepEqual(index.independentReview, { required: true });
+  assert.equal(index.independentReview.required, true);
+  assert.equal(index.independentReview.riskItems[0].reason, high.riskReason);
+  assert.equal(index.independentReview.riskAssessment, undefined);
   await assert.rejects(
     () =>
       f.call("Lead", "review", {
@@ -862,7 +902,7 @@ test("independent reviewers, controller short probes and a single cumulative rec
     candidate: candidate.candidate,
     verdict: "pass",
     dimensions,
-    findings: "独立核对反例和差异",
+    findings: "独立核对反例和差异", riskAssessment: reviewedRisk,
   });
   assert.equal((await f.inspect(first)).state, "waiting_verification");
   await f.waitJob(
@@ -926,6 +966,7 @@ test("legacy whitelist settings no longer block original-ticket inline checks", 
   await f.waitJob(jobId);
   assert.match((await f.call("Lead", "checkEvidence", { jobId })).log, /behavior confirmed/);
   assert.equal((await f.inspect(successor)).state, "queued");
+  await f.heartbeat(Object.keys(f.roles));
   await f.call("Lead", "reviseSchedule", { taskId: successor, reason: "技术前置只需验证通过", after: [{ taskId, stage: "verified" }] });
   assert.equal((await f.inspect(successor)).state, "assigned");
   assert.notEqual((await f.inspect(taskId)).state, "accepted");

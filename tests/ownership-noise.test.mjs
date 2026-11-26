@@ -91,7 +91,7 @@ test("protected planning source and untracked noise do not block the five origin
   const verification = structuredClone(original.verification);
   for (const check of verification.checks) if (!check.expectedOutput) delete check.expectedOutput;
   const ticket = { developerId: original.developerId, title: "Ownership fixture", description: "Recover original ticket",
-    writes: original.writes, reads: [], risk: "high", verification };
+    writes: original.writes, reads: [], risk: "high", riskReason: "文件归属检查", verification };
   const sources = { spec, tickets: "tickets.md", attempts: "attempts.md" };
   const baseline = key => f.call("Lead", "dispatchPlan", { requirementId, sources, tickets: [{ key, ...ticket }] }).tasks[0];
   const fileBefore = versionedSpec("冻结的规划文档");

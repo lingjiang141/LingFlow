@@ -3,6 +3,20 @@ import { createHash } from "node:crypto";
 import { coversPath, fingerprint, overlaps } from "./files.mjs";
 import { executionFacts } from './evidence-facts.mjs';
 
+export function redSnapshotSpec(task, check) {
+  if (check.stage !== "red" || !task.baseline ||
+      check.redMode !== "auto-revert" && task.writes.some(file => !coversPath(task.verification.testWrites, file))) return null;
+  const basis = task.redBaseline ?? task.baseline;
+  return { head: basis.sourcesHead ?? basis.head, sources: basis.sources, writes: task.writes };
+}
+
+export function redSnapshotValid(job, receipt, spec = job.redSnapshot) {
+  const diagnostics = receipt?.redProofDiagnostics;
+  return !spec || Boolean(job.redSnapshot?.head === spec.head && job.redSnapshot?.sources === spec.sources &&
+    diagnostics?.mode === "auto-revert" && diagnostics.baselineHead === spec.head &&
+    diagnostics.implementationFingerprint === spec.sources && diagnostics.inputsIntact && diagnostics.worktreeCleanAfter);
+}
+
 // Red proves behavior on the admitted implementation, not on the later green candidate.
 // Test identity is checked separately so replacing assertions cannot launder a red result.
 export function redEvidence(root, task, check, implementationBaseline = task.baseline.sources, version) {

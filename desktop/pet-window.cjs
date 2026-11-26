@@ -13,10 +13,10 @@ function createDesktopPet(mainWindow, runtime, { directory = app.getPath("userDa
   const assets = createPetAssets(path.join(directory, "pet-cache"));
   let character = assets.catalog.characters.some(item => item.id === saved.character) ? saved.character : "dsh";
   let selection = saved.selection ?? {}, expanded = false, dragging, regions = [], disposed = false, ignore;
-  const area = Number.isFinite(saved.x) && Number.isFinite(saved.y)
-    ? screen.getDisplayNearestPoint({ x: saved.x + 92, y: saved.y + 92 }).workArea : screen.getPrimaryDisplay().workArea;
-  let restBounds = fitBounds({ x: Number.isFinite(saved.x) ? saved.x : area.x + area.width - 220,
-    y: Number.isFinite(saved.y) ? saved.y : area.y + area.height - 220, width: 184, height: 184 }, area);
+  const defaultBounds = area => fitBounds({ x: area.x + area.width - 220, y: area.y + area.height - 220, width: 184, height: 184 }, area);
+  let restBounds = Number.isFinite(saved.x) && Number.isFinite(saved.y)
+    ? fitBounds({ x: saved.x, y: saved.y, width: 184, height: 184 }, screen.getDisplayNearestPoint({ x: saved.x + 92, y: saved.y + 92 }).workArea)
+    : defaultBounds(screen.getPrimaryDisplay().workArea);
   const pet = new BrowserWindow({ ...restBounds, transparent: true, frame: false, resizable: false, hasShadow: false,
     alwaysOnTop: true, skipTaskbar: true, show: false, backgroundColor: "#00000000", title: "LingFlow · 桌宠",
     webPreferences: { preload: path.join(__dirname, "pet-preload.cjs"), nodeIntegration: false, contextIsolation: true, sandbox: true, backgroundThrottling: false } });
@@ -80,7 +80,7 @@ function createDesktopPet(mainWindow, runtime, { directory = app.getPath("userDa
   handle("expanded", setExpanded);
   listen("pick", value => { if (validSelection(value)) { pick(value); mainWindow.webContents.send("lingflow-pet:selection-changed", selection); } });
   listen("selection", pick, () => mainWindow.webContents);
-  listen("show", () => { mainWindow.hide(); show(); }, () => mainWindow.webContents);
+  listen("show", () => show({ useDefaultPosition: true }), () => mainWindow.webContents);
   listen("menu", () => menu().popup({ window: pet }));
   listen("regions", value => { if (Array.isArray(value) && value.length <= 10) regions = value.filter(rect => [rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)); });
   listen("drag", phase => {
@@ -106,9 +106,22 @@ function createDesktopPet(mainWindow, runtime, { directory = app.getPath("userDa
   pet.webContents.on("will-navigate", event => event.preventDefault());
   pet.on("close", event => { if (!disposed) { event.preventDefault(); pet.hide(); } });
   const ready = pet.loadFile(path.join(__dirname, "pet/index.html"));
-  function show() { void ready.then(() => { if (!disposed) { pet.showInactive(); publish(); } }); }
+  function show({ useDefaultPosition = false } = {}) {
+    void ready.then(() => {
+      if (disposed) return;
+      if (useDefaultPosition && !pet.isVisible()) {
+        const area = screen.getPrimaryDisplay().workArea;
+        restBounds = defaultBounds(area);
+        pet.setBounds(expanded ? aroundCenter(restBounds, 760, 640, area) : restBounds);
+      }
+      pet.setAlwaysOnTop(true);
+      pet.showInactive();
+      if (process.platform === "win32") pet.moveTop();
+      publish();
+    });
+  }
   return { window: pet, ready, show, menu, selectCharacter, setExpanded,
-    toggle: () => pet.isVisible() ? pet.hide() : show(),
+    toggle: () => pet.isVisible() ? pet.hide() : show({ useDefaultPosition: true }),
     dispose() {
       if (disposed) return;
       disposed = true; clearInterval(hitTimer);

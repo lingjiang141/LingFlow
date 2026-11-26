@@ -355,26 +355,167 @@ html[data-wallpaper="1"] dialog {
 }
 
 nav {
-  margin: 18px 0;
+  margin: 10px 0 14px;
+  display: grid;
+  gap: 4px;
+  max-height: calc(100vh - 330px);
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 
-nav button {
-  display: block;
-  width: 100%;
-  text-align: left;
-  margin: 7px 0;
+.aside-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.count-pill {
+  min-width: 20px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--lf-accent-soft);
+  color: var(--lf-accent);
+  font-size: 11px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.project-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: var(--lf-radius);
+  transition: background-color 0.16s ease;
+}
+
+.project-item:hover {
+  background: var(--lf-surface-2);
+}
+
+.project-item.active {
+  background: var(--lf-accent-soft);
+}
+
+.project-item.active::before {
+  content: "";
+  position: absolute;
+  left: -10px;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--lf-accent);
+}
+
+.project-link {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 4px 8px 8px;
   border: 0;
   background: transparent;
+  text-align: left;
+}
+
+.project-link:hover {
+  background: transparent;
+}
+
+.project-avatar {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--lf-surface);
+  border: 1px solid var(--lf-border);
+  color: var(--lf-text-dim);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.project-item.active .project-avatar {
+  background: linear-gradient(135deg, var(--lf-accent), var(--lf-accent-strong));
+  border-color: transparent;
+  color: var(--lf-accent-text);
+}
+
+.project-meta {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.project-meta b,
+.project-meta small {
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-nav button.active {
-  background: var(--lf-accent-soft);
-  color: var(--lf-accent);
+.project-meta b {
+  font-size: 13px;
+  font-weight: 500;
 }
 
-nav button.active:hover {
+.project-item.active .project-meta b {
+  color: var(--lf-accent);
+  font-weight: 600;
+}
+
+.project-meta small {
+  font-size: 11px;
+  color: var(--lf-text-mute);
+}
+
+.icon-button {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 8px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--lf-text-mute);
+}
+
+.icon-button svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.icon-button:hover {
+  color: var(--lf-accent);
+  background: var(--lf-surface);
+  border-color: var(--lf-border);
+}
+
+.project-rename {
+  margin-right: 4px;
+  opacity: 0;
+}
+
+.project-item:hover .project-rename,
+.project-item.active .project-rename,
+.project-rename:focus-visible {
+  opacity: 1;
+}
+
+.new-project {
+  width: 100%;
+  border-style: dashed;
+  color: var(--lf-text-dim);
+}
+
+.new-project:hover {
+  color: var(--lf-accent);
+  border-color: var(--lf-accent);
   background: var(--lf-accent-soft);
 }
 
@@ -1231,6 +1372,313 @@ dialog.appearance-dialog {
   }
 }
 
+/* ------------------------------------------------------------------ 视觉精修
+   统一层次：分区成卡、细节动效、状态色条。全部走主题变量，四套主题与背景图共用。 */
+
+.brand {
+  display: block;
+}
+
+.brand b {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, var(--lf-accent), var(--lf-accent-strong));
+  color: var(--lf-accent-text);
+  font-size: 17px;
+  vertical-align: -3px;
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--lf-accent) 35%, transparent);
+}
+
+.brand span {
+  margin-left: 39px;
+  margin-top: 6px;
+}
+
+aside {
+  display: flex;
+  flex-direction: column;
+}
+
+.aside-bottom {
+  left: 22px;
+  right: 22px;
+  padding-top: 14px;
+  border-top: 1px solid var(--lf-divider);
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.dot {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lf-ok) 22%, transparent);
+  animation: lf-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes lf-pulse {
+  50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--lf-ok) 6%, transparent); }
+}
+
+header {
+  align-items: flex-end;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--lf-divider);
+}
+
+.header-text {
+  min-width: 0;
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.title-row h1 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.title-row .icon-button {
+  opacity: 0.7;
+}
+
+.title-row:hover .icon-button,
+.title-row .icon-button:focus-visible {
+  opacity: 1;
+}
+
+#project-path.is-path {
+  display: inline-block;
+  max-width: 100%;
+  padding: 3px 10px;
+  border-radius: var(--lf-radius-sm);
+  background: var(--lf-surface-2);
+  border: 1px solid var(--lf-border);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.project-actions button {
+  padding: 7px 12px;
+  font-size: 12px;
+}
+
+button:not(.icon-button):not(.project-link):active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.primary {
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--lf-accent) 28%, transparent);
+}
+
+button.danger:hover {
+  background: var(--lf-danger-bg);
+  border-color: color-mix(in srgb, var(--lf-danger) 45%, transparent);
+}
+
+#empty {
+  box-shadow: var(--lf-shadow);
+}
+
+.empty-symbol {
+  display: inline-grid;
+  place-items: center;
+  width: 96px;
+  height: 96px;
+  border-radius: 28px;
+  background: var(--lf-accent-soft);
+  font-size: 52px;
+  animation: lf-float 5s ease-in-out infinite;
+}
+
+@keyframes lf-float {
+  50% { transform: translateY(-6px); }
+}
+
+.steps span {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--lf-border);
+  background: var(--lf-surface);
+}
+
+#workspace > .section {
+  background: var(--lf-column-bg);
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius-lg);
+  padding: 14px 16px 16px;
+  margin-bottom: 16px;
+}
+
+.section-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.section-head h2::before {
+  content: "";
+  width: 4px;
+  height: 16px;
+  border-radius: 4px;
+  background: linear-gradient(var(--lf-accent), var(--lf-accent-strong));
+}
+
+.section-head button {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.column {
+  background: color-mix(in srgb, var(--lf-surface-2) 82%, transparent);
+}
+
+.role,
+.task {
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    transform 0.16s ease;
+}
+
+.role:hover {
+  border-color: var(--lf-border-strong);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--lf-bg) 55%, transparent);
+  transform: translateY(-1px);
+}
+
+.role::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 3px;
+  background: var(--lf-border-strong);
+  z-index: 2;
+}
+
+.role[data-state="enabled"]::after { background: var(--lf-ok); }
+.role[data-state="paused"]::after { background: var(--lf-warn); }
+
+.task {
+  border-left: 3px solid var(--lf-border-strong);
+}
+
+.task[data-risk="low"] { border-left-color: var(--lf-ok); }
+.task[data-risk="medium"] { border-left-color: var(--lf-warn); }
+.task[data-risk="high"] { border-left-color: var(--lf-danger); }
+
+.task:hover,
+.task:focus-visible {
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--lf-accent) 16%, transparent);
+  outline: none;
+}
+
+#notices {
+  display: grid;
+  gap: 8px;
+}
+
+.notice {
+  position: relative;
+  padding: 11px 14px 11px 30px;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+}
+
+.notice::before {
+  content: "";
+  position: absolute;
+  left: 13px;
+  top: 18px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--lf-text-mute);
+}
+
+.notice.is-unread {
+  border-color: color-mix(in srgb, var(--lf-accent) 45%, var(--lf-border));
+}
+
+.notice.is-unread::before {
+  background: var(--lf-accent);
+  box-shadow: 0 0 0 3px var(--lf-accent-soft);
+}
+
+.notice button {
+  margin-top: 8px;
+  padding: 5px 11px;
+  font-size: 12px;
+}
+
+#notices:empty::after {
+  content: "暂无协作动态";
+  color: var(--lf-text-mute);
+  font-size: 12px;
+}
+
+.binding {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid color-mix(in srgb, var(--lf-accent) 40%, transparent);
+  border-radius: var(--lf-radius);
+}
+
+dialog {
+  border-radius: var(--lf-radius-lg);
+}
+
+dialog[open] {
+  animation: lf-pop 0.2s ease both;
+}
+
+dialog[open]::backdrop {
+  backdrop-filter: blur(3px);
+}
+
+@keyframes lf-pop {
+  from { transform: translateY(8px) scale(0.98); }
+}
+
+#modal-title {
+  font-size: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--lf-divider);
+}
+
+input,
+textarea,
+select {
+  border-radius: var(--lf-radius-sm);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--lf-accent);
+  box-shadow: 0 0 0 3px var(--lf-accent-soft);
+  outline: none;
+}
+
+#error {
+  border: 1px solid color-mix(in srgb, var(--lf-danger) 35%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
 /* Compact stage headers and bounded lists keep team cards in the first viewport. */
 .column h3 { display: flex; align-items: center; gap: 7px; }
 .column h3::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--lf-accent); }
@@ -1272,8 +1720,9 @@ html[data-wallpaper="1"] main :is(h1,h2,h3,h4,p,small,label) {
   header { margin-bottom: 14px; gap: 12px; }
   h1 { font-size: 24px; margin: 6px 0; }
   .project-actions { flex-wrap: wrap; justify-content: flex-end; }
-  .board { height: 156px; }
+  .board { height: 148px; }
   .role { padding: 12px; }
-  .role p { margin: 8px 0; }
+  .role h3 { margin-bottom: 8px; }
+  .role p { min-height: 0; margin: 8px 0; }
   .role-actions { gap: 6px; }
 }

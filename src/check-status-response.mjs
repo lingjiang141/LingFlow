@@ -7,6 +7,7 @@ export function compactCheck(job) {
     classification: job.classification ?? null, environmentFailure: job.environmentFailure ?? receipt.environmentFailure ?? false,
     ...(job.redEvidenceValid && {redEvidenceValid:true}),
     ...(job.redFailureReason && { redFailureReason: job.redFailureReason, nextAction: job.nextAction }),
+    ...(receipt.redProofDiagnostics && { redProofDiagnostics: receipt.redProofDiagnostics }),
     ...(job.reason && { reason: String(job.reason).slice(0, 100) }),
     ...(job.membersCanRetry !== undefined && { membersCanRetry: job.membersCanRetry }),
     ...(job.classification === "preparation-timeout" && preparationTiming(job.check, receipt)),

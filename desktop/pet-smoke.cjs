@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, screen } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const assert = require("node:assert/strict");
@@ -9,8 +9,8 @@ app.setPath("userData", path.join(root, "profile"));
 const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 const result = { errors: [] };
 app.whenReady().then(async () => {
-  const main = new BrowserWindow({ show: false, webPreferences: { preload: path.join(__dirname, "selection-preload.cjs"), contextIsolation: true, sandbox: true } });
-  await main.loadURL("data:text/html,<title>Pet smoke host</title>");
+  const main = new BrowserWindow({ webPreferences: { preload: path.join(__dirname, "selection-preload.cjs"), contextIsolation: true, sandbox: true } });
+  await main.loadURL("data:text/html," + encodeURIComponent('<title>Pet smoke host</title><button id="desktop-pet" onclick="lingflowDesktop.showPet()">桌宠模式</button>'));
   const states = ["accepted", "ready", "trial", "superseded", "assigned", "rework", "reviewing", "waiting_verification", "queued", "paused", "queued", "queued", "paused", "abandoned"];
   const titles = ["统一 AI 出题入口", "移除重复表单", "资源预选状态回显", "旧入口兼容票", "生成记录面板", "停止任务交互", "状态一致性核对", "接口与界面联合验证", "空态与失败提示", "补齐边界回归", "资源列表刷新", "整版收口检查", "已释放范围的票", "已放弃的票"];
   const snapshot = { projects: [{ id: "project", name: "员工考试系统" }], roles: [{ id: "dev", name: "开发成员" }],
@@ -24,7 +24,11 @@ app.whenReady().then(async () => {
     closed = true; result.serviceClosedOnQuit = true;
     fs.writeFileSync(path.join(root, "result.json"), JSON.stringify(result, null, 2));
   } };
-  const lifecycle = installDesktopLifecycle(main, runtime, { petOptions: { directory: path.join(root, "data"), cursor: () => pointer } });
+  const directory = path.join(root, "data");
+  const area = screen.getPrimaryDisplay().workArea;
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(directory, "pet.json"), JSON.stringify({ x: area.x, y: area.y }));
+  const lifecycle = installDesktopLifecycle(main, runtime, { petOptions: { directory, cursor: () => pointer } });
   const pet = lifecycle.pet;
   const web = pet.window.webContents;
   web.on("console-message", event => { if (event.level === "error" || event.level === 3) result.errors.push(event.message); });
@@ -36,6 +40,41 @@ app.whenReady().then(async () => {
     throw Error("Timed out: " + code);
   }
   const capture = async name => fs.writeFileSync(path.join(root, name + ".png"), (await web.capturePage()).toPNG());
+  const trayPet = lifecycle.menu.getMenuItemById("pet");
+  const expectedBounds = { x: Math.max(area.x, area.x + area.width - 220), y: Math.max(area.y, area.y + area.height - 220),
+    width: Math.min(184, area.width), height: Math.min(184, area.height) };
+  const windowState = () => ({ panelVisible: main.isVisible(), petOnTop: pet.window.isAlwaysOnTop(), bounds: pet.window.getBounds() });
+  async function waitForVisible(window, label) {
+    for (let attempt = 0; attempt < 60 && !window.isVisible(); attempt++) await wait(50);
+    assert.equal(window.isVisible(), true, label);
+  }
+  main.show();
+  await waitForVisible(main, "The main panel must be visible before clicking");
+  pet.window.setAlwaysOnTop(false);
+  await main.webContents.executeJavaScript("document.getElementById('desktop-pet').click()", true);
+  await waitForVisible(pet.window, "The panel button must show the pet");
+  const fromPanel = windowState();
+
+  trayPet.click();
+  assert.equal(pet.window.isVisible(), false);
+  main.show();
+  await waitForVisible(main, "The main panel must be visible before the tray action");
+  pet.window.setPosition(area.x, area.y);
+  pet.window.setAlwaysOnTop(false);
+  trayPet.click();
+  await waitForVisible(pet.window, "The tray menu must show the pet");
+  const fromTray = windowState();
+  for (const [entry, state] of Object.entries({ panel: fromPanel, tray: fromTray })) {
+    assert.equal(state.panelVisible, true, `${entry} must keep the main panel visible`);
+    assert.equal(state.petOnTop, true, `${entry} must set the desktop pet always on top`);
+    for (const key of Object.keys(expectedBounds)) {
+      assert.ok(Math.abs(state.bounds[key] - expectedBounds[key]) <= 2,
+        `${entry} bounds ${key} must be ${expectedBounds[key]} within DPI rounding, got ${state.bounds[key]}`);
+    }
+  }
+  result.petActivation = { fromPanel, fromTray };
+  trayPet.click();
+
   main.close();
   await until("document.getElementById('sprite').dataset.animation");
   await wait(250);

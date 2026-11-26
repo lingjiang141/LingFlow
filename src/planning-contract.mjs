@@ -51,7 +51,7 @@ export function readTicketContracts(document) {
   for (const input of readPlanningBlocks(document, "lingflow-contract")) {
     const { ticket } = input ?? {};
     if (!stableKey(ticket) || fields.some((name) => !Array.isArray(input[name])) ||
-        Object.keys(input).some((name) => !["ticket", "developerChecks"].includes(name) && !fields.includes(name)) ||
+        Object.keys(input).some((name) => !["ticket", "developerChecks", "riskItems"].includes(name) && !fields.includes(name)) ||
         input.developerChecks !== undefined && typeof input.developerChecks !== "boolean")
       fail(`${document.file}：lingflow-contract 须填写 ticket、requiredWrites、requiredTestWrites、requiredAcceptance`);
     if (contracts.has(ticket)) fail(`${document.file}：票 ${ticket} 的 lingflow-contract 重复`);
@@ -64,6 +64,7 @@ export function readTicketContracts(document) {
         requiredTestWrites: scopePaths(input.requiredTestWrites),
         requiredAcceptance: [...new Set(input.requiredAcceptance)],
         ...(input.developerChecks && { developerChecks: true }),
+        ...(input.riskItems !== undefined && { riskItems: input.riskItems }),
       });
     } catch (error) {
       fail(`${document.file}：票 ${ticket} 的契约路径无效：${error.message}`);

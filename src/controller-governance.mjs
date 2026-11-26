@@ -47,7 +47,9 @@ export function successorAction(state,task,ownedDirty=[], {requireAvailable=fals
     tickets:ticketFiles.length===1?ticketFiles[0]:ticketFiles,
     attempts:documents.attempts?.file??task.sources?.attempts?.file};
   const ticket={key,developerId:developer?.id??task.developerId,title:task.title,description:task.description,
-    risk:task.risk,riskReason:task.riskReason,readOnly:task.readOnly,writes,reads:[...(task.reads??[])],
+    risk:task.risk,riskReason:task.riskReason ?? undefined,
+    ...(task.riskItems?.some(item => item.verifiedBy.length) && { riskItems: task.riskItems }),
+    readOnly:task.readOnly,writes,reads:[...(task.reads??[])],
     contextReads:[...(task.contextReads??[])],resources:[...(task.resources??[])],ownedDirty,
     after:(task.dependencies??[]).map(taskId=>({taskId,stage:task.dependencyStages?.[taskId]??'verified'})),
     ...(task.baseline && task.verification && ownedDirty.some(file => !coversPath(task.verification.testWrites, file)) &&

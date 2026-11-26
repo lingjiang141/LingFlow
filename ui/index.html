@@ -13,9 +13,12 @@
     <aside>
       <div class="brand"><b>◈</b> LingFlow<span>本地 Agent 工作流</span></div>
       <div id="theme-dock" class="theme-dock"></div>
-      <div class="eyebrow">工作空间</div>
+      <div class="aside-section-head">
+        <div class="eyebrow">工作空间</div>
+        <span id="project-count" class="count-pill" hidden></span>
+      </div>
       <nav id="projects"></nav>
-      <button id="new-project" class="subtle">＋ 添加项目</button>
+      <button id="new-project" class="subtle new-project">＋ 添加项目</button>
       <div class="aside-bottom">
         <span class="dot"></span> 本地运行 · DSH<br /><small
           >快速模式 / 独立窗口</small
@@ -24,9 +27,12 @@
     </aside>
     <main>
       <header>
-        <div>
+        <div class="header-text">
           <div class="eyebrow">协作工作台</div>
-          <h1 id="project-title">让协作有始有终。</h1>
+          <div class="title-row">
+            <h1 id="project-title">让协作有始有终。</h1>
+            <button id="rename-project" class="icon-button" type="button" title="重命名工作区" aria-label="重命名工作区" hidden></button>
+          </div>
           <p id="project-path">连接真实会话，从一次明确的需求开始。</p>
         </div>
         <div class="project-actions">

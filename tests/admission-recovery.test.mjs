@@ -43,10 +43,11 @@ test("an orphan outside file can be acknowledged by exact bytes without claiming
   });
   finding = diagnose(f);
   assert.deepEqual(finding.outsideOwnership.candidates, [{ taskId: peer.id, ticketKey: "PEER", state: "trial" }]);
-  assert.equal(finding.nextAction.args.confirmForeignDirty[file].taskId, peer.id);
-  const invalid = { ...finding.nextAction.args,
-    confirmForeignDirty: { [file]: { ...finding.nextAction.args.confirmForeignDirty[file], taskId: null } } };
-  assert.throws(() => f.call("Lead", "confirmForeignDirty", invalid), /责任票不匹配/);
+  assert.equal(finding.nextAction.args.confirmByOwnership[file].taskId, peer.id);
+  const { confirmByOwnership, ...args } = finding.nextAction.args;
+  const invalid = { ...args, confirmForeignDirty: { [file]: { taskId: null, sha256: finding.outsideOwnership.sha256 } } };
+  assert.throws(() => f.call("Lead", "confirmForeignDirty", invalid),
+    error => error.rejected?.[0]?.reason === "unknown-owner");
   f.store.change(s => { s.tasks.find(item => item.id === peer.id).state = "abandoned"; });
   finding = diagnose(f);
   const receipt = f.call("Lead", finding.nextAction.command, finding.nextAction.args);

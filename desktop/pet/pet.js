@@ -65,6 +65,8 @@ function render(next) {
   $("progress-label").textContent = next.spec ? `${next.completed} / ${next.total} 已收口 · ${next.accepted} 已验收` : "在主控会话登记 Spec 后查看进展";
   $("percentage").replaceChildren(document.createTextNode(String(next.percent)), element("span", "%"));
   $("progress-fill").style.width = next.percent + "%";
+  $("progress-accepted").style.width = (next.total ? Math.round(next.accepted / next.total * 100) : 0) + "%";
+  $("ring").style.setProperty("--p", next.percent);
   $("caption").textContent = next.spec ? `${next.percent}% · ${next.completed}/${next.total} 票` : "LingFlow";
   const signature = JSON.stringify(next.groups);
   if (signature !== groupSignature) {
@@ -75,7 +77,7 @@ function render(next) {
       const retired = group.tickets.filter(ticket => ticket.retired).length;
       $(group.id).querySelector("h2 b").textContent = retired ? `${group.tickets.length - retired} · 历史 ${retired}` : group.tickets.length;
       container.replaceChildren(...group.tickets.map(ticket => {
-        const card = element("details", "", "ticket"); card.dataset.id = ticket.id; card.open = open.has(ticket.id);
+        const card = element("details", "", "ticket" + (ticket.retired ? " retired" : "")); card.dataset.id = ticket.id; card.dataset.state = ticket.state; card.open = open.has(ticket.id);
         const summary = element("summary", ""), top = element("div", "", "ticket-top");
         top.append(element("span", ticket.key, "ticket-key"), element("span", ticket.label, "ticket-state"));
         summary.append(top, element("div", ticket.title, "ticket-title"), element("p", ticket.summary, "ticket-blurb"));

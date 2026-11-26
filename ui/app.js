@@ -56,6 +56,7 @@ const status = {
 };
 const taskStatus = (task) => isHistoricalTicket(task) ?
   (task.state === "abandoned" || task.state === "superseded" ? status[task.state] : "范围已释放") :
+  task.blockedBy?.some(blocker => blocker.code === "member-archived") ? "原责任成员已归档 · 待主控处理" :
   task.blockedBy?.some(blocker => blocker.code === "bridge-tools-missing") ? "工具未恢复 · bridge-tools-missing" : ["assigned", "rework"].includes(task.state) && !task.deliveredAt
   ? "已分配 · 待送达" : status[task.state] ?? task.state;
 const roleLabels = { controller: "主控", developer: "开发", reviewer: "审查", supervisor: "监管者" };
@@ -200,6 +201,24 @@ function deleteProject() {
   $("fields").append(
     node("p", "将移除 LingFlow 中的成员绑定、需求、任务和协作记录。项目文件和 DSH 会话会保留。"),
     node("p", project.root),
+  );
+}
+function unbindMember(role) {
+  form(
+    `解绑「${role.name}」的会话？`,
+    [],
+    async (_values, operationId) => {
+      await polling;
+      const receipt = await call("unbindRole", { roleId: role.id, expectedSessionId: role.sessionId }, operationId);
+      if (receipt.error) throw Error(receipt.message ?? "解绑失败，请刷新后重试");
+      roleActions.delete(role.id);
+    },
+    "解绑会话",
+  );
+  $("fields").append(
+    node("p", "此成员会暂停投递并等待绑定。现有票据、未读消息和旧对话保留。"),
+    node("p", role.provider === "codex" ? "在新会话绑定同一成员，回到成员卡开启角色。" :
+      "在同一项目的新 DSH 对话使用 lingflow_connect 申请原成员，再回这里确认绑定并开启角色。"),
   );
 }
 const memberFields = [
@@ -376,9 +395,53 @@ function renameMember(role) {
     (v, op) => call("editRole", { roleId: role.id, name: v.name }, op),
   );
 }
+function renameProject(project = state.projects.find((p) => p.id === projectId)) {
+  if (!project) return;
+  form(
+    "重命名工作区",
+    [{ name: "name", label: "工作区名称", value: project.name, placeholder: "例如：官网改版" }],
+    async (v, op) => {
+      const name = v.name.trim();
+      if (!name) throw Error("工作区名称不能为空");
+      if (name.length > 80) throw Error("工作区名称不能超过 80 个字符");
+      if (name === project.name) return;
+      await call("renameProject", { projectId: project.id, name }, op);
+    },
+    "保存名称",
+  );
+  const input = $("field-name");
+  input.maxLength = 80;
+  $("fields").append(node("p", "名称只影响 LingFlow 中的显示与成员上下文；项目目录、成员绑定和 DSH 会话保持不变。", "muted"));
+  input.focus();
+  input.select();
+}
+const pencilIcon = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11.1 2.2a1.6 1.6 0 0 1 2.3 0l.4.4a1.6 1.6 0 0 1 0 2.3l-7.6 7.6-3.2.8.8-3.2z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="m9.8 3.5 2.7 2.7" stroke="currentColor" stroke-width="1.4"/></svg>';
+const pathTail = (root = "") => root.split(/[\\/]+/).filter(Boolean).slice(-2).join(" / ") || root;
+function projectItem(p) {
+  const item = node("div", undefined, "project-item" + (p.id === projectId ? " active" : ""));
+  const link = button("", () => {
+    if (projectId === p.id) return;
+    projectId = p.id;
+    render();
+  }, "project-link");
+  link.title = `${p.name}\n${p.root}\n双击重命名`;
+  link.ondblclick = () => renameProject(p);
+  if (p.id === projectId) link.setAttribute("aria-current", "page");
+  const meta = node("span", undefined, "project-meta");
+  meta.append(node("b", p.name), node("small", pathTail(p.root)));
+  link.append(node("span", [...p.name.trim()][0]?.toUpperCase() ?? "◈", "project-avatar"), meta);
+  const rename = button("", () => renameProject(p), "icon-button project-rename");
+  rename.innerHTML = pencilIcon;
+  rename.title = "重命名工作区";
+  rename.setAttribute("aria-label", `重命名工作区：${p.name}`);
+  item.append(link, rename);
+  return item;
+}
 $("new-project").onclick = newProject;
 $("first-project").onclick = newProject;
 $("delete-project").onclick = deleteProject;
+$("rename-project").innerHTML = pencilIcon;
+$("rename-project").onclick = () => renameProject();
 $("controller-settings").onclick = () => {
   const project = state.projects.find((p) => p.id === projectId);
   if (!project) return;
@@ -623,22 +686,15 @@ function render() {
   $("empty").hidden = !!project;
   $("workspace").hidden = !project;
   $("delete-project").hidden = !project;
+  $("rename-project").hidden = !project;
   $("controller-settings").hidden = !project;
   $("check-settings").hidden = !project;
   $("project-title").textContent = project?.name ?? "让协作有始有终。";
   $("project-path").textContent = project?.root ?? "连接真实会话，从一次明确的需求开始。";
-  $("projects").replaceChildren(
-    ...state.projects.map((p) =>
-      button(
-        p.name,
-        () => {
-          projectId = p.id;
-          render();
-        },
-        p.id === projectId ? "active" : "",
-      ),
-    ),
-  );
+  $("project-path").classList.toggle("is-path", !!project);
+  $("project-count").hidden = !state.projects.length;
+  $("project-count").textContent = state.projects.length;
+  $("projects").replaceChildren(...state.projects.map(projectItem));
   if (!project) return;
   $("patrol-settings").textContent = project.autoPatrol === false ? "自动巡检 · 已暂停" : "自动巡检 · 已开启";
   $("roles").replaceChildren(
@@ -646,6 +702,7 @@ function render() {
       .filter((r) => r.projectId === projectId && !r.archivedAt)
       .map((r) => {
         const card = node("article", undefined, "role");
+        card.dataset.state = r.enabled ? "enabled" : r.sessionId ? "paused" : "unbound";
         const heading = node("h3");
         const name = button(r.name, () => renameMember(r), "role-name");
         name.title = "点击改名";
@@ -697,6 +754,11 @@ function render() {
           resume.disabled = Boolean(activity?.pending) || ["offline", "waiting-idle"].includes(r.resumeStatus);
           actions.append(resume);
         }
+        if (r.sessionId) {
+          const unbind = button("解绑会话", () => unbindMember(r));
+          unbind.disabled = Boolean(activity?.pending);
+          actions.append(unbind);
+        }
         if (r.kind === "controller" && !r.isPrimary)
           actions.append(
             button("设为通知负责人", async () => {
@@ -706,11 +768,10 @@ function render() {
           );
         if (!r.isPrimary && !r.enabled)
           actions.append(
-            button("归档成员", () =>
-              form(`归档 ${r.name}（保留历史）`, [], (_v, op) =>
-                call("archiveRole", { roleId: r.id }, op),
-              ),
-            ),
+            button("归档成员", () => {
+              form(`归档「${r.name}」？`, [], (_v, op) => call("archiveRole", { roleId: r.id }, op), "归档成员");
+              $("fields").append(node("p", "成员会从当前团队移除。未完成的原票和协作记录保留，由主控另行处理。"));
+            }),
           );
         card.append(actions);
         try {
@@ -726,7 +787,7 @@ function render() {
     ...state.requests
       .filter(
         (r) =>
-          !r.confirmed &&
+          !r.confirmed && !r.cancelledAt &&
           state.roles.some(
             (a) =>
               a.id === r.roleId && a.projectId === projectId && !a.archivedAt,
@@ -785,6 +846,7 @@ function render() {
       if (!tasks.length) list.append(node("p", "暂无任务", "muted"));
       for (const t of tasks) {
         const card = node("article", undefined, "task");
+        card.dataset.risk = t.risk ?? "none";
         card.tabIndex = 0;
         card.setAttribute("role", "button");
         card.title = [t.ticketKey, t.title, taskStatus(t), t.waitReason, t.progress].filter(Boolean).join(" · ");
@@ -820,7 +882,7 @@ function render() {
       .slice(-8)
       .reverse()
       .map((n) => {
-        const row = node("div", `${n.readAt ? "已读取" : "待处理"} · ${n.summary}`, "notice");
+        const row = node("div", `${n.readAt ? "已读取" : "待处理"} · ${n.summary}`, "notice" + (n.readAt ? "" : " is-unread"));
         const task = state.tasks.find((item) => item.id === n.taskId);
         const quality = noticeQualitySummary(n, task);
         if (quality) {

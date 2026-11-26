@@ -90,7 +90,11 @@ export function wakeHealth(state, roleIds, now = Date.now()) {
   const stuck = wakes.filter(wake => !(wake.noticeIds ?? []).every(id => diagnosticIds.has(id)) &&
     (wake.state === "failed" && !wake.consumedAt || activeWake(wake) && !busy.has(wake.roleId) &&
     (wake.state === "enqueued" ? handoffAge(wake, now) >= lossDeadline(wake) : wake.lostAt)));
-  return { stuck:stuck.length, oldestStuckAgeMs:stuck.length?Math.max(...stuck.map(wake=>handoffAge(wake,now))):0,
+  const unread = new Set(state.notices.filter(notice => !notice.readAt && !notice.workConfirmedAt).map(notice => notice.id));
+  const blocked = state.roles.filter(role => roles.has(role.id) && busy.has(role.id) &&
+    role.deliveryBlock?.code === "stale-turn" && role.deliveryBlock.noticeIds.some(id => unread.has(id)));
+  const ages = [...stuck.map(wake => handoffAge(wake, now)), ...blocked.map(role => now - role.deliveryBlock.since)];
+  return { stuck: ages.length, oldestStuckAgeMs: Math.max(0, ...ages),
     lastDeliveredAt:Math.max(0,...wakes.map(wake=>wake.handedOffAt??wake.admittedAt??0))||null };
 }
 

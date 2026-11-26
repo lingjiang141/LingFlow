@@ -16,7 +16,23 @@ export function commandSignature(command) {
   const signature = { command, required: Object.hasOwn(requiredArguments, command) ? requiredArguments[command] : [], operationId: { required: writeCommands.includes(command), type: 'string', maxLength: 160,
     retry: '同一内容重试必须沿用同一 id' } };
   if (command === 'summarize') Object.assign(signature, { fields: { 'decision.testReview': { type: 'string', minLength: 1, maxLength: 16000,
-    requiredWhen: '原需主控核对的报告 manifest.testChanges 非空' } }, example: summarizeExample });
+    requiredWhen: '原需主控核对的报告 manifest.testChanges 非空' },
+    'decision.riskNote': { type: 'string', maxLength: 8000, requiredWhen: '有冻结风险条目的新高风险票' },
+    'decision.dimensions': { requiredWhen: '非高风险实施票', keys: ['requirements', 'implementation', 'system'],
+      each: { state: 'pass | issues | unverified', note: '核对开发报告的独立说明', checkIds: ['<check-id>'] } } }, example: summarizeExample });
+  if (command === 'review') signature.optional = { recheckCandidate: '仅原审查者在主控修订探针后核对同一候选的契约异议',
+    leadCheckRevisionId: '复核时从 diagnoseTask 或修订回执复制当前探针修订记录编号',
+    riskAssessment: [{ id: '<risk-id>',
+    verdict: 'covered | not_covered | unverifiable', evidence: '实际核对证据', checkIds: ['<check-id>'] }] };
+  if (command === 'confirmForeignDirty') Object.assign(signature, {
+    fields: {
+      confirmForeignDirty: { '<path>': { taskId: '<peerTaskId> | null', sha256: '<hex>' } },
+      confirmByOwnership: { '<path>': { taskId: '<peerTaskId>' } },
+      byTask: { '<peerTaskId>': true },
+    },
+    requiresAny: ['confirmForeignDirty', 'confirmByOwnership', 'byTask'],
+    receipt: '逐文件返回 confirmed 和 rejected。至少一项成功时保存确认结果；全部拒绝时返回 contract-invalid。',
+  });
   if (command === 'inspect') Object.assign(signature, { default: 'summary', maxBytes: 190000,
     sections: ['full','acceptance','baseline.other','checkJobs','reports','reviews','scheduleHistory','events'], paging: { offset: 0, limit: '1–200' } });
   if (command === 'diagnoseTask') signature.optional = { supersedeConflict: '主控确认无法顺序执行时填写冲突原票 ID' };
@@ -27,6 +43,11 @@ export function commandSignature(command) {
     outcomes: ["applied", "confirmation-required", "blocked"], fields: ["chosen", "result", "remainingBlockers", "nextAction"] });
   if (command === "accept") Object.assign(signature, { roles: ["ui", "controller"], state: "trial",
     evidence: "当前候选的实际用户试用结论", records: ["acceptedBy", "candidate", "at"] });
+  if (command === "closeRound") Object.assign(signature, { roles: ["ui", "controller"], state: "trial",
+    evidence: "用户对整轮最终版本的实际试用结论", reason: "本轮候选漂移的成因",
+    optional: { confirmDrift: "布尔值，须显式为 true 才可验收漂移票", projectId: "主控默认本项目，工作台可按 planId 或唯一项目推导",
+      planId: "只处理此计划的试用票，省略时处理本项目全部试用票" },
+    outcomes: ["accepted", "partial", "blocked"], gitWrites: false });
   if (command === "question") signature.optional = { blocking: "布尔值，默认 false，作用域由提问者的角色决定" };
   if (command === "answer") signature.optional = { resume: "布尔值，默认 true，安全时恢复暂停中的原开发责任" };
   if (command === "message") signature.optional = { roleId: "主控直达的同项目角色", replyTo: "本人收到且可核实发件人的消息或通知 ID" };
@@ -50,7 +71,9 @@ export function commandSignature(command) {
 export const summarizeExample = {
   command: 'summarize', operationId: 'summarize-<unique-id>', args: { taskId: '<taskId>', instructions: '按已批准验收条款试用',
     decision: { candidate: '<candidate>', acceptance: [{ id: '<AC-id>', evidence: '填写实际核对结果', checkIds: ['<full-check-id>'] }],
-      limits: '填写实际剩余限制', testReview: '纯新增 +77/-0，未削弱既有断言，整文件回归 15 passed' } },
+      limits: '填写实际剩余限制', testReview: '纯新增 +77/-0，未削弱既有断言，整文件回归 15 passed',
+      dimensions: Object.fromEntries(['requirements', 'implementation', 'system'].map(name =>
+        [name, { state: 'pass', note: '填写该维实际对照的报告内容、候选差异和核对结果', checkIds: ['<full-check-id>'] }])) } },
 };
 export const writeSignatures = writeCommands.map(command => `${command}：operationId 必填；args 必填字段 ${requiredArguments[command].join('、') || '无'}。`).join('\n');
 

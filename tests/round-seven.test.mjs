@@ -120,16 +120,18 @@ test("an assigned ticket can reconcile a peer's exact version outside frozen inp
     s.tasks.push({ ...s.tasks[0], id: "peer", ticketKey: "PEER", state: "rework", writes: [file], ownedDirty: [file] });
   });
   const finding = diagnose(f);
-  assert.equal(finding.nextAction?.args.confirmForeignDirty?.[file]?.taskId, "peer");
+  assert.equal(finding.nextAction?.args.confirmByOwnership?.[file]?.taskId, "peer");
   const queued = f.call("Dev", "check", { taskId: f.taskId, checkId: "red", async: true });
   const waiting = diagnose(f);
   assert.equal(waiting.nextAction.command, "checkStatus");
   assert.equal(waiting.outsideOwnership.canConfirmNow, false);
   assert.throws(() => f.call("Lead", finding.nextAction.command, finding.nextAction.args), /无在途检查/);
   assert.equal(f.wf.claimCheck(queued.jobId), null);
-  assert.equal(f.call("Lead", finding.nextAction.command, finding.nextAction.args).state, "stored");
+  const { confirmByOwnership, ...args } = finding.nextAction.args;
+  const strict = { ...args, confirmForeignDirty: { [file]: { ...confirmByOwnership[file], sha256: finding.outsideOwnership.sha256 } } };
+  assert.equal(f.call("Lead", "confirmForeignDirty", strict).state, "stored");
   f.put(file, "peer work\n");
-  assert.throws(() => f.call("Lead", finding.nextAction.command, finding.nextAction.args), /文件已变化/);
+  assert.throws(() => f.call("Lead", "confirmForeignDirty", strict), /文件已变化/);
   assert.equal(diagnose(f).outsideOwnership.file, file);
 });
 

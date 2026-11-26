@@ -8,6 +8,9 @@ import { Workflow } from "../../src/workflow.mjs";
 import { startCheckRunner } from "../../src/check-runner.mjs";
 
 export const versionedSpec = (body = "approved") => `Version: v1\n\n${body}\n\n## 变更记录\n`;
+export const reviewedDimensions = checkId => Object.fromEntries(["requirements", "implementation", "system"]
+  .map(name => [name, { state: "pass", note: "独立核对开发报告、候选及同票实测回执", checkIds: [checkId] }]));
+export const reviewedRisk = [{ id: "RISK-1", verdict: "covered", evidence: "核对候选差异及 full 对该行为的断言", checkIds: ["full"] }];
 
 export async function fixture(t, marker = "AssertionError", options = {}) {
   mkdirSync(".validation", { recursive: true });
@@ -29,6 +32,7 @@ export async function fixture(t, marker = "AssertionError", options = {}) {
   }
   if (options.existingTest) git("add", testFile);
   git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture");
+  for (const [file, contents] of Object.entries(options.externalDirty ?? {})) put(file, contents);
   for (const [file, contents] of Object.entries(options.ownedDirty ?? {})) put(file, contents);
   for (let i = 0; i < (options.untrackedFiles ?? 0); i++) put(`outside-${i}.txt`, "user-owned baseline");
   const store = new Store(path.join(dir, "workflow.sqlite"));
@@ -59,7 +63,9 @@ export async function fixture(t, marker = "AssertionError", options = {}) {
   const plan = call("Lead", "dispatchPlan", { requirementId: requirement.id, sources, tickets: [{
     key: "NEW-TEST", developerId: roles.find(r => r.kind === "developer").id,
     title: "New test", description: "New assertion", risk: options.risk ?? "high", riskReason: "critical behavior",
-    writes: ["implementation.cjs", testFile], reads: [], ownedDirty: Object.keys(options.ownedDirty ?? {}),
+    ...(options.riskItems !== undefined && { riskItems: options.riskItems }),
+    writes: options.testOnly ? [testFile] : ["implementation.cjs", testFile],
+    reads: options.testOnly ? ["implementation.cjs"] : [], ownedDirty: Object.keys(options.ownedDirty ?? {}),
     verification: { testWrites: [testFile], checks, ...(options.browserE2E && {browserE2E:options.browserE2E}), acceptance: [{ id: "AC1", text: "new behavior" }] },
   }] });
   const taskId = plan.tasks[0].taskId;

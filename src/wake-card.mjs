@@ -1,6 +1,6 @@
 import { noticeQualitySummary, qualityDimensions, qualityStateLabel } from "../ui/quality-summary.js";
 import { handoffLines, handoffRecord } from "../ui/handoff-card.js";
-import { silentResumeText } from "./controller-notices.mjs";
+import { admissionNoticeKind, silentResumeText } from "./controller-notices.mjs";
 
 const LIMIT = 4;
 export const DSH_SUMMARY_LIMIT = 480;
@@ -31,6 +31,7 @@ function dshExcerpt(value, limit) {
 
 function purpose(notice, task, job, kind, ref, phase) {
   if (notice.silent) return { label: "角色已开启 · 本轮无责任", detail: silentResumeText };
+  if (kind === "check-revision-requested") return { label: "检查修订已授权", next: notice.summary, priority: 0 };
   switch (kind) {
     case "git-drift":
       return { label: "Git 提交漂移 · 提交者未知",
@@ -147,14 +148,17 @@ function purpose(notice, task, job, kind, ref, phase) {
         next: "核对成员实际 DSH 状态和原票，按异常类型处理。",
         priority: 0,
       };
-    case "preflight-ready":
-      return { label: "准入恢复 · 原票已自动分派", next: "不需要确认或重复派单；沿原票等待回报。", priority: 2 };
     case "wake-abandoned":
       return { label: "原唤醒已停止重投", detail: notice.summary, priority: 0 };
     case "delivery-blocked":
       return { label: "原票投递受阻", detail: notice.summary, next: "从 list 查看原票投递状态及原因。明确拒绝达上限可用 redeliver；结果待对账时请成员在原会话读取 inbox。", priority: 0 };
-    case "dependency-ready":
-      return { label: "前置已满足 · 原票已自动分派", next: "沿原票查看，不重复派单。", priority: 2 };
+    case "turn-stale":
+      return {
+        label: "成员回合超时（可自愈）",
+        detail: notice.summary,
+        next: "持续多轮未恢复时核对原会话。",
+        priority: 3,
+      };
     case "preflight":
       return {
         label: "任务准入受阻",
@@ -228,7 +232,7 @@ function purpose(notice, task, job, kind, ref, phase) {
       };
     default:
       return {
-        label: "协作动态",
+        label: `未分类通知（kind=${kind}）`,
         detail: notice.summary,
         next: "读取收件箱查看原事项。",
         priority: 3,
@@ -239,6 +243,7 @@ function purpose(notice, task, job, kind, ref, phase) {
 function noticeItems(notices, tasks, jobs) {
   const groups = new Map();
   for (const notice of notices) {
+    if (admissionNoticeKind(notice.key)) continue;
     const [kind, ref, phase] = notice.key.split(":");
     const task = !notice.silent && notice.taskId
       ? tasks.find((item) => item.id === notice.taskId)
@@ -249,7 +254,8 @@ function noticeItems(notices, tasks, jobs) {
         : undefined;
     const item = purpose(notice, task, job, kind, ref, phase);
     // Repeated blockers on the same ticket share a row; distinct jobs keep their names.
-    const key = notice.silent ? "silent-resume" : JSON.stringify([kind, task?.id, item.label, job?.id, ["report", "report-blocked", "review", "message"].includes(kind) ? ref : undefined]);
+    const key = notice.silent ? "silent-resume" : JSON.stringify([kind, task?.id, item.label, job?.id,
+      kind === "turn-stale" ? notice.blockedRoleId ?? ref : ["report", "report-blocked", "review", "message"].includes(kind) ? ref : undefined]);
     const previous = groups.get(key);
     groups.set(key, { ...item, notice, kind, phase, task, count: (previous?.count ?? 0) + 1,
       actionable: previous?.actionable || notice.actionable,
@@ -258,6 +264,13 @@ function noticeItems(notices, tasks, jobs) {
   return [...groups.values()].sort(
     (a, b) => Number(Boolean(b.actionable)) - Number(Boolean(a.actionable)) || (a.priority ?? 1) - (b.priority ?? 1),
   );
+}
+
+function withStaleTurnDetails(business, items) {
+  const shown = business.slice(0, LIMIT);
+  if (shown.length && shown.length < LIMIT)
+    shown.push(...items.filter(item => item.kind === "turn-stale").slice(0, LIMIT - shown.length));
+  return shown;
 }
 
 function dshResult({ notice, kind, phase, task, label, detail, next, count }, roles, messages, budget) {
@@ -275,7 +288,7 @@ function dshResult({ notice, kind, phase, task, label, detail, next, count }, ro
   const result = message?.text ?? (kind === "message" ? "原文见收件箱。" : record?.blocker || example ||
     (!task && kind !== "resume" || kind === "report" || kind === "review" && !phase ? notice.summary : ""));
   const followUp = record?.request || record?.openItems?.find(item => item.blocking)?.text ||
-    (kind === "patrol-resume" && !task ? next : "");
+    (kind === "turn-stale" || kind === "patrol-resume" && !task ? next : "");
   const available = budget - headline.length - quality.length - 3;
   const detailBudget = Math.min(available, 84);
   const body = detailBudget > 1 ? dshExcerpt([result, followUp].filter(Boolean).join("。"), detailBudget) : "";
@@ -283,11 +296,13 @@ function dshResult({ notice, kind, phase, task, label, detail, next, count }, ro
 }
 
 export function dshWakeSummary(notices, tasks, jobs, roles, messages = []) {
-  const highlights = notices.filter(notice => !notice.silent && notice.actionable !== false);
+  const highlights = notices.filter(notice => !notice.silent &&
+    (notice.actionable !== false || notice.key.startsWith("turn-stale:")));
   const items = noticeItems(highlights, tasks, jobs);
-  const business = items.filter(item => item.kind !== "resume" && item.kind !== "context");
-  const results = business.length ? business : items;
-  const shown = results.slice(0, LIMIT);
+  const actionable = items.filter(item => item.kind !== "turn-stale");
+  const business = actionable.filter(item => item.kind !== "resume" && item.kind !== "context");
+  const results = business.length ? business : actionable;
+  const shown = withStaleTurnDetails(results, items);
   const footer = results.length > LIMIT ? `\n另有 ${results.length - LIMIT} 项，见收件箱。` : "";
   const rowBudget = Math.floor((DSH_SUMMARY_LIMIT - footer.length - shown.length + 1) / Math.max(1, shown.length));
   return shown.map(item => dshResult(item, roles, messages, rowBudget)).join("\n") + footer;
@@ -295,7 +310,8 @@ export function dshWakeSummary(notices, tasks, jobs, roles, messages = []) {
 
 export function wakeSummary(notices, tasks, jobs, roles = []) {
   const items = noticeItems(notices, tasks, jobs);
-  const shown = items.slice(0, LIMIT);
+  const business = items.filter(item => item.kind !== "turn-stale");
+  const shown = withStaleTurnDetails(business, items);
   const lines = shown.map(({ label, detail, next, task, notice, count, actionable, controllerChecked }) => {
     const quality = notice.silent ? null : noticeQualitySummary(notice, task);
     const handoff = notice.silent ? [] : handoffLines(notice, task, roles);
@@ -309,8 +325,7 @@ export function wakeSummary(notices, tasks, jobs, roles = []) {
     const truncated = snippet.endsWith("…") && handoff.length ? "\n  摘要已截断；请用上面的 inspect 查看完整原文。" : "";
     return `- ${hasPolicy ? "[actionable: " + Boolean(actionable) + "; 主控已自查: " + Boolean(controllerChecked) + "] " : ""}${label}${ticket}${extra}${snippet ? "\n  摘要：" + snippet : ""}${next ? "\n  下一步：" + next : ""}${result}${handoff.map((line) => "\n  " + line).join("")}${truncated}`;
   });
-  const remaining =
-    notices.length - shown.reduce((total, item) => total + item.count, 0);
+  const remaining = business.slice(LIMIT).reduce((total, item) => total + item.count, 0);
   if (remaining > 0) lines.push(`另有 ${remaining} 条，收件箱可查看全部事项。`);
   return lines.join("\n");
 }

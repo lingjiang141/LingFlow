@@ -1,3 +1,4 @@
+import { reviewedRisk } from "./helpers/evidence-fixture.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import test from "node:test";
@@ -30,7 +31,8 @@ function report(f) {
   return call(f, "Dev", "report", { summary: "实际用例通过", dimensions });
 }
 function review(f, candidate) {
-  return call(f, "Review", "review", { candidate, verdict: "pass", findings: "核对真实差异", dimensions,
+  f.wf.heartbeat(f.roles.map(role => ({ id: role.name, state: "idle", pending: 0, jobs: 0 })));
+  return call(f, "Review", "review", { candidate, verdict: "pass", findings: "核对真实差异", dimensions, riskAssessment: reviewedRisk,
     testReview: "新用例覆盖行为，既有断言保留" });
 }
 test("three disjoint commits preserve the original check jobs and allow report and review", async t => {
@@ -114,6 +116,7 @@ test("ordinary questions are informational and developer blockers resume paused 
 });
 test("resuming review redelivers a fresh review notice while retaining the same candidate", async t => {
   const f = await passing(t);
+  f.wf.heartbeat(f.roles.map(role => ({ id: role.name, state: "idle", pending: 0, jobs: 0 })));
   const delivery = report(f);
   const reviewed = task(f);
   assert.equal(reviewed.state, "reviewing");
@@ -141,7 +144,7 @@ test("controller acceptance needs explicit evidence and records who accepted the
   const delivery = report(f);
   review(f, delivery.candidate);
   call(f, "Lead", "summarize", { instructions: "运行独立演练", decision: {
-    candidate: delivery.candidate, acceptance: [{ id: "AC1", evidence: "隔离用例复核", checkIds: ["full"] }], limits: "隔离项目" } });
+    candidate: delivery.candidate, acceptance: [{ id: "AC1", evidence: "隔离用例复核", checkIds: ["full"] }], limits: "隔离项目", riskNote: "核对独立审查与隔离验证" } });
   assert.throws(() => call(f, "Dev", "accept", { evidence: "无权限" }), /仅用户工作台或本项目主控/);
   assert.equal(call(f, "Lead", "accept", { evidence: " " }).error, "missing-argument");
   const accepted = call(f, "Lead", "accept", { evidence: "用户已试用演练候选并确认" });
@@ -247,7 +250,7 @@ async function trialFixture(t) {
   const delivery = report(f);
   review(f, delivery.candidate);
   call(f, "Lead", "summarize", { instructions: "试用用例", decision: {
-    candidate: delivery.candidate, acceptance: [{ id: "AC1", evidence: "复核", checkIds: ["full"] }], limits: "隔离环境" } });
+    candidate: delivery.candidate, acceptance: [{ id: "AC1", evidence: "复核", checkIds: ["full"] }], limits: "隔离环境", riskNote: "核对独立审查与隔离证据" } });
   return f;
 }
 

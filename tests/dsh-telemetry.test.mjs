@@ -2,8 +2,48 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { setImmediate as flush } from "node:timers/promises";
 import { apply } from "../adapters/dsh/index.mjs";
 import { createDshTelemetry } from "../adapters/dsh/telemetry.mjs";
+
+test("the DSH adapter submits a fresh heartbeat on the matched controller turn end", async t => {
+  mkdirSync(".validation", { recursive: true });
+  const dataDir = mkdtempSync(path.resolve(".validation", "turn-end-heartbeat-"));
+  const toolsModule = path.join(dataDir, "define-tool.mjs");
+  writeFileSync(toolsModule, "export const defineTool = definition => definition;");
+  writeFileSync(path.join(dataDir, "config.json"), JSON.stringify({ port: 1, bridgeToken: "fixture" }));
+  const listeners = [], events = [], replies = [];
+  const agent = { id: "lead", status: "running", inbox: { nextTurn: [], nextStep: [] },
+    session: { snapshotEvents: () => events }, ctx: { tools: { register() {} } } };
+  t.mock.method(globalThis, "setInterval", () => 0);
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (url.endsWith("/bindings")) return Response.json({ sessions: [agent.id], controllerSessions: [agent.id] });
+    assert.ok(url.endsWith("/heartbeat"), url);
+    replies.push(JSON.parse(options.body));
+    return Response.json({ deliveries: [] });
+  });
+  await apply({
+    agents: { list: () => [agent] }, sessionController: {}, jobs: { list: () => [] },
+    on: (name, listener) => { if (name === "session/event") listeners.push(listener); },
+    effect: setup => t.after(setup()),
+  }, { dataDir, toolsModule });
+  const emit = (type, turn) => {
+    const event = { type, time: Date.now(), seq: events.length + 1, data: { turn } };
+    events.push(event);
+    for (const listener of listeners) listener(agent.session, event);
+  };
+  emit("turn/start", 1);
+  emit("turn/end", 0);
+  await flush();
+  assert.deepEqual(replies, []);
+  emit("turn/end", 1);
+  agent.status = "idle";
+  await flush();
+  assert.equal(replies.length, 1);
+  const [session] = replies[0].sessions;
+  assert.equal(session.state, "idle");
+  assert.ok(session.telemetry.turn.endedAt >= session.telemetry.turn.startedAt);
+});
 
 test("DSH dispatch timeout checks the original receipt without resubmitting", async (t) => {
   mkdirSync(".validation", { recursive: true });

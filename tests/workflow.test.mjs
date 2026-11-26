@@ -7,6 +7,51 @@ import { Store } from "../src/store.mjs";
 import { Workflow } from "../src/workflow.mjs";
 import { scopePaths } from "../src/files.mjs";
 
+test("only the workbench can unbind a member and the replacement conversation recovers the original task", t => {
+  const f = setup(t);
+  const member = f.roles[1];
+  const args = { roleId: member.id, expectedSessionId: member.name };
+  const taskId = f.dispatch().taskId;
+  const oldRequest = f.store.read().requests.find(request => request.roleId === member.id);
+  const snapshot = () => f.wf.snapshot();
+  const role = () => snapshot().roles.find(item => item.id === member.id);
+  const originalTask = snapshot().tasks.find(task => task.id === taskId);
+  assert.throws(() => f.call("主控", "unbindRole", args), /仅用户工作台/);
+  assert.throws(() => f.call("ui", "unbindRole", { ...args, expectedSessionId: "outdated" }), /绑定已变化/);
+  f.heartbeat("running");
+  assert.throws(() => f.call("ui", "unbindRole", args), /原会话仍有运行回合/);
+  assert.equal(role().sessionId, member.name);
+  const oldWake = f.heartbeat().deliveries.find(wake => wake.roleId === member.id);
+  assert.ok(oldWake);
+  f.wf.acknowledge(oldWake.id, member.name, "dsh", { generation: oldWake.generation });
+
+  const receipt = f.call("ui", "unbindRole", args, "detach-member");
+  assert.deepEqual(receipt, { roleId: member.id, sessionId: null, enabled: false });
+  assert.equal(role().connected, false);
+  assert.throws(() => f.call(member.name, "inbox"), /未绑定/);
+  assert.throws(() => f.call("ui", "confirmBinding", { requestId: oldRequest.id }), /申请已失效/);
+  assert.equal(f.wf.validWake(oldWake.id, member.name, oldWake.generation).valid, false);
+  assert.equal(f.wf.acknowledge(oldWake.id, member.name, "dsh", { generation: oldWake.generation }).state, "obsolete");
+
+  const nextSession = "new-developer-session";
+  const request = f.wf.request({ roleId: member.id, sessionId: nextSession, cwd: f.root });
+  f.call("ui", "confirmBinding", { requestId: request.id });
+  assert.equal(role().sessionId, nextSession);
+  assert.equal(role().enabled, false);
+  assert.deepEqual(f.call("ui", "unbindRole", args, "detach-member"), receipt);
+  assert.equal(role().sessionId, nextSession);
+  f.call("ui", "enable", { roleId: member.id, enabled: true });
+  const [delivery] = f.wf.heartbeat([{ id: nextSession, state: "idle", pending: 0, jobs: 0 }]).deliveries;
+  assert.equal(delivery?.sessionId, nextSession);
+  const inbox = f.call(nextSession, "inbox");
+  assert.equal(inbox.context.role.id, member.id);
+  assert.ok(inbox.recovery.tasks.some(task => task.id === taskId));
+  assert.ok(inbox.notices.some(notice => notice.taskId === taskId && notice.key.startsWith("dispatch:")));
+  const resumedTask = snapshot().tasks.find(task => task.id === taskId);
+  assert.equal(resumedTask.assignee, originalTask.assignee);
+  assert.equal(resumedTask.revision, originalTask.revision);
+});
+
 function setup(t) {
   const parent = path.resolve(".validation");
   mkdirSync(parent, { recursive: true });
@@ -101,6 +146,25 @@ function setup(t) {
     root: projectRoot,
   };
 }
+test("only the workbench can rename a project and members receive the new context", (t) => {
+  const f = setup(t);
+  const args = { projectId: f.project.id, name: "  新的工作区  " };
+  const revisions = () => new Map(f.store.read().roles.map((r) => [r.id, r.contextRevision ?? 0]));
+  const before = revisions();
+  assert.throws(() => f.call("主控", "renameProject", args), /仅用户工作台/);
+  assert.deepEqual(f.call("ui", "renameProject", { ...args, name: "   " }).missing, ["name"]);
+  assert.throws(() => f.call("ui", "renameProject", { ...args, name: "名".repeat(81) }), /80/);
+  const receipt = f.call("ui", "renameProject", args, "rename-project");
+  assert.deepEqual(receipt, { id: f.project.id, name: "新的工作区" });
+  assert.deepEqual(f.call("ui", "renameProject", args, "rename-project"), receipt);
+  assert.equal(f.wf.snapshot().projects.find((p) => p.id === f.project.id).name, "新的工作区");
+  const after = revisions();
+  for (const [roleId, revision] of before) assert.ok(after.get(roleId) > revision, roleId);
+  assert.equal(f.call("主控", "inbox").context.project.name, "新的工作区");
+  f.call("ui", "renameProject", args);
+  assert.deepEqual(revisions(), after, "unchanged name keeps context revisions");
+});
+
 test("deleting a project clears its workflow and frees its directory", (t) => {
   const f = setup(t);
   const otherRoot = path.join(path.dirname(f.root), "other");
@@ -277,7 +341,7 @@ test("busy sessions queue zero prompts; one wake merges many business notices", 
 test("background inbox consumption invalidates a pending notification", (t) => {
   const f = setup(t);
   const { taskId } = f.dispatch();
-  f.call("开发一", "question", { taskId, text: "缺少输入" });
+  f.call("开发一", "question", { taskId, text: "缺少输入", blocking: true });
   const wake = f.heartbeat().deliveries.find((w) => w.roleId === f.roles[0].id);
   assert.ok(wake);
   f.call("主控", "inbox");
@@ -569,10 +633,15 @@ test("custom roster, primary routing and safe archival preserve existing obligat
       ),
   );
   f.call("ui", "enable", { roleId: f.roles[1].id, enabled: false });
-  assert.throws(
-    () => f.call("ui", "archiveRole", { roleId: f.roles[1].id }),
-    /未收口/,
-  );
+  const before = f.store.read().tasks.find(task => task.id === taskId);
+  assert.equal(f.call("ui", "archiveRole", { roleId: f.roles[1].id }).archived, true);
+  assert.ok(!f.wf.catalog()[0].roles.some(role => role.id === f.roles[1].id));
+  const after = f.wf.snapshot().tasks.find(task => task.id === taskId);
+  assert.deepEqual(after.questions, before.questions);
+  assert.equal(after.assignee, before.assignee);
+  assert.equal(after.state, before.state);
+  assert.equal(after.blockedBy[0].code, "member-archived");
+  assert.throws(() => f.call("开发一", "inbox"), /未绑定/);
   f.call("ui", "enable", { roleId: f.roles[2].id, enabled: false });
   f.call("ui", "archiveRole", { roleId: f.roles[2].id });
   assert.ok(!f.wf.catalog()[0].roles.some((r) => r.id === f.roles[2].id));

@@ -18,6 +18,7 @@ export function detectEnvironmentFailure(receipt = {}, output = '', startedAt = 
   const hit = (value, description) => { code = value; reason = description; };
   if (failed) {
     if (isPreparationTimeout(receipt,check)) hit('preparation-timeout', '构建前置耗尽检查预算。前置实测 '+(receipt.preparation?.elapsedMs??'未知')+'ms，冻结总预算 '+check?.timeoutMs+'ms。执行 diagnoseTask 核对原票可用的预算修订路径');
+    else if (receipt.launchErrorCode === 'npm-runtime-missing') hit('npm-runtime-missing', launchError);
     else if (launchError) hit('launch-error', '检查进程或构建前置未能启动：' + launchError);
     else if (receipt.timedOut) hit('check-timeout', '检查进程超时，需要核对原进程与资源后再重跑');
     else if (receipt.signal) hit('process-signal', '检查进程被信号终止：' + receipt.signal);

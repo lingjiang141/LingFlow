@@ -243,7 +243,7 @@ export async function startServer({
         "Content-Type": "application/json; charset=utf-8",
       });
       res.end(JSON.stringify({ error: error.message, code: error.verificationCode, violations: error.violations, nextAction: error.nextAction,
-        unownedWrites: error.unownedWrites, blockers: error.blockers }));
+        unownedWrites: error.unownedWrites, blockers: error.blockers, rejected: error.rejected }));
     }
   });
   try {

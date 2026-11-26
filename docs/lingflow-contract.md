@@ -82,13 +82,15 @@
 
 ## 原票被后继票替代或退出调度
 
-主控使用 `supersede {taskId,supersededBy,reason}`。旧票必须处于 `paused` 或 `blocked`，且没有 queued/launching/uncertain 的检查；责任人仍在执行的票须先停写并 `yieldForSchedule`。写集存在暂存、未暂存、未跟踪或被 Git 忽略的在途改动时，释放回执显式给出 `handoff:{ticketKey,writes,ownedDirty,instruction}` 和 `nextAction:{command:"dispatchPlan",args:...}`。文件原样保留，由开发成员承接，主控不得接手实现或代为提交；工作树干净时省略 handoff。承接提案不等于新增授权，仍须 previewPlan、规划正文和归属准入校验。原基线已经漂移或冻结契约已不可满足，不妨碍在上述条件下替代旧票。
+主控使用 `supersede {taskId,supersededBy,reason}`。用 `schema {command:"supersede"}` 查询允许的状态。旧票须无 queued/launching/uncertain 的检查。责任人仍在执行的票须先停写并 `yieldForSchedule`。写集存在暂存、未暂存、未跟踪或被 Git 忽略的在途改动时，释放回执显式给出 `handoff:{ticketKey,writes,ownedDirty,instruction}` 和 `nextAction:{command:"dispatchPlan",args:...}`。文件原样保留，由开发成员承接，主控不得接手实现或代为提交；工作树干净时省略 handoff。承接提案不等于新增授权，仍须 previewPlan、规划正文和归属准入校验。原基线已经漂移或冻结契约已不可满足，不妨碍在上述条件下替代旧票。
+
+已交付票停在 `waiting_verification` 时，宿主须确认责任成员在交付后结束回合、心跳新鲜且当前空闲，排队输入、后台作业和未收口检查均已清空。主控可用 `diagnoseTask {taskId:承接票ID,supersedeConflict:原票ID}` 核对承接。仅终止旧票时使用 `abandonTask`。两条命令均记录主控、原因和停写凭据。
 
 替代后旧票为 `superseded`，退出读集、写集、检查输入及共享资源的并发占用；保留原范围、冻结契约、基线、报告、审查、检查作业和日志，通过 `inspect {taskId}`、`checkEvidence {jobId}` 仍可读取。审计记录包含主控、原因、时间和后继票。后继票同项目且未收尾，原有等待票的依赖转向后继票；后继票移除对旧票的自等待并继承旧票的其他前置，verified/accepted 门槛不会降低，存在依赖环时整次操作被拒绝。旧票不因此成为“已验收”；后继票满足其余准入条件后立即进入调度。
 
 仅需释放收尾票时，主控可用 `releaseSchedule {taskId,reason}`。暂停的实施票也可使用 `reviseSchedule {taskId,writes:[],reason}`，不要混传其他调度调整。两者执行相同停写和检查收口门禁，保存 `releasedScope` 快照并清空当前 writes；原票保持 paused/blocked，不再自动准入，其冻结检查也不再占用读集。`abandonTask` 同样提供在途改动承接回执。已释放票不能再次释放、confirmCommit 或 rebindCommittedWork；诊断发现原写集仍有改动时分类为 `controller-takeover-risk`，直接返回含 ownedDirty 的承接参数。
 
-冲突回执带 `peerState`、`remedy` 和 `nextAction`。对同项目的 paused/blocked 对端，已有后继票 ID 时会给出完整 `supersede` 参数；其他情况先 `inspect`，不会指示主控强制终止 active 票。`schema {command:"supersede|releaseSchedule"}` 可分别查询新命令的约束。使用稳定 operationId 重试读取同一回执。
+冲突回执带 `peerState`、`remedy` 和 `nextAction`。确认需承接时，用 `diagnoseTask` 核对实际写集冲突、停写证据及依赖，按回执提交 `supersede`。使用稳定 operationId 重试读取同一回执。
 
 ## 主控边界、证据回投与提交审计（F25/F26）
 

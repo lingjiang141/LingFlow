@@ -7,11 +7,11 @@ export const requiredArguments = Object.freeze({
   checkStatus: [], inspectPlan: ['planId'], scopePreview: ['writes'],
   buildCache: ['projectId'],
   previewPlan: ['requirementId', 'sources', 'tickets'], dispatchPlan: ['requirementId', 'sources', 'tickets'],
-  createProject: ['name', 'root'], deleteProject: ['projectId'], addRole: ['projectId', 'kind', 'name'],
+  createProject: ['name', 'root'], deleteProject: ['projectId'], renameProject: ['projectId', 'name'], addRole: ['projectId', 'kind', 'name'],
   setControllerPolicy: ['projectId'], setAutoPatrol: ['projectId', 'enabled'],
   publishPlan: ['text', 'sources'], message: ['text'], savePromptPreset: ['name', 'identityPrompt'],
   deletePromptPreset: ['presetId'], editRole: ['roleId'], setPrimaryController: ['roleId'], archiveRole: ['roleId'],
-  approve: ['text', 'source'], confirmBinding: ['requestId'], enable: ['roleId', 'enabled'],
+  approve: ['text', 'source'], confirmBinding: ['requestId'], unbindRole: ['roleId', 'expectedSessionId'], enable: ['roleId', 'enabled'],
   dispatch: ['requirementId', 'developerId', 'title', 'description', 'risk', 'writes'],
   redeliver: ['taskId'], unblock: ['taskId', 'reason'], resumeTask: ['taskId', 'reason'], supersede: ['taskId', 'supersededBy', 'reason'],
   dropPendingInput: ['roleId', 'expectedQueueFingerprint', 'reason'],
@@ -21,12 +21,13 @@ export const requiredArguments = Object.freeze({
   interveneTask: ['taskId', 'mode', 'reason'], ackTaskIntervention: ['taskId', 'requestId', 'reason'],
   resolveTaskIntervention: ['taskId', 'requestId', 'decision', 'reason'],
   rebindCommittedWork: ['taskId', 'expectedBase', 'expectedHead', 'confirmPaths', 'reason'],
-  reviseSchedule: ['taskId', 'reason'], confirmForeignDirty: ['taskId', 'expectedHead', 'reason', 'confirmForeignDirty'],
+  reviseSchedule: ['taskId', 'reason'], confirmForeignDirty: ['taskId', 'expectedHead', 'reason'],
   check: ['taskId', 'checkId'], reconcileCheck: ['jobId', 'evidence'],
   insertSchedule: ['taskId', 'after', 'reason'],
   registerChecks: ['taskId', 'checks'],
   report: ['taskId', 'summary'], review: ['taskId', 'candidate', 'verdict', 'findings'],
   rework: ['taskId', 'reason'], summarize: ['taskId', 'instructions'], accept: ['taskId', 'evidence'],
+  closeRound: ['evidence', 'reason'],
   question: ['taskId', 'text'], answer: ['taskId', 'questionId', 'text'], progress: ['taskId', 'text'],
   retryBatch: ['batchId', 'reason'], reviseBatch: ['batchId', 'reason', 'groups'],
 });
@@ -97,6 +98,18 @@ const samples = { enabled: true, writes: [], sources: { spec: 'spec.md', tickets
 export const commandExamples = Object.entries(requiredArguments).map(([command, fields]) => {
   const args = Object.fromEntries(fields.map(field => [field, samples[field] ?? (/(Id$|^id$|^supersededBy$)/.test(field) ? '<uuid>' : '填写' + field)]));
   if (command === 'checkStatus') args.taskId = '<uuid>';
+  if (command === 'closeRound') args.confirmDrift = true;
+  if (command === 'confirmForeignDirty') args.confirmByOwnership = { 'path/to/file': { taskId: '<peerTaskId>' } };
   if (command === 'dispatch') args.readOnly = true;
   return `${command}: ${JSON.stringify({ command, args: JSON.stringify(args) })}`;
 }).join('\n');
+
+export const requireValue = (value, message) => {
+  if (!value) throw Error(message);
+  return value;
+};
+export const requireText = (value, label) =>
+  requireValue(
+    typeof value === "string" && value.trim() && value.length <= 16000,
+    label + "不能为空或过长",
+  ) && value.trim();

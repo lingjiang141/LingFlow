@@ -21,11 +21,11 @@ LingFlow 是独立运行的 Windows 桌面协作工作台，使用 DSH 会话，
 
 ## 界面预览
 
-工作台实机截图（发布前界面）
+主面板展示本轮规格范围、票据看板和团队会话。
 
 ![LingFlow 工作台主界面](docs/images/lingflow-workbench.png)
 
-桌宠项目进度（透明背景）
+桌宠概览展示技术收口进度、验收数量和三组票卡。
 
 <img src="docs/images/lingflow-pet-progress.png" width="640" alt="桌宠显示项目进度、已收口、开发中和等待准入">
 

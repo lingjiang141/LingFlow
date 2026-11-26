@@ -1,3 +1,4 @@
+import { reviewedRisk } from "./helpers/evidence-fixture.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
@@ -187,7 +188,7 @@ test("an owned early commit requires explicit rebind, a fresh genuine red, green
   heartbeat(f);
   f.call("Review", "inbox");
   f.call("Review", "review", { ...args, candidate: report.candidate, verdict: "pass", findings: "三段证据可核对",
-    dimensions, testReview: "已核对修改后的测试版本，红仍在旧实现上真实失败，绿在提交后的实现通过。" });
+    dimensions, riskAssessment: reviewedRisk, testReview: "已核对修改后的测试版本，红仍在旧实现上真实失败，绿在提交后的实现通过。" });
   assert.equal(taskOf(f).state, "ready");
 });
 

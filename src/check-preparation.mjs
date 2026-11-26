@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fingerprint, scopePaths, overlaps } from "./files.mjs";
 import { withBuildCache } from "./build-cache.mjs";
+import { resolveCheckCommand } from "./check-command.mjs";
 
 export function preparationContract(check, writes, commandArgs) {
   const requiredArtifacts = scopePaths(check.requiredArtifacts ?? []);
@@ -17,7 +18,7 @@ export function preparationContract(check, writes, commandArgs) {
   return { requiredArtifacts: [...new Set([...requiredArtifacts, ...normalized.flatMap(step => step.outputs)])], preSteps: normalized };
 }
 
-export async function prepareCheck(root, check, { env = process.env, dataDir, projectId } = {}) {
+export async function prepareCheck(root, check, { env = process.env, dataDir, projectId, preferredNode } = {}) {
   const started = Date.now(), steps = [];
   const files = [...new Set([...(check.preSteps ?? []).flatMap(step => step.outputs), ...(check.requiredArtifacts ?? [])])];
   const readArtifacts = () => files.map(file => {
@@ -28,17 +29,10 @@ export async function prepareCheck(root, check, { env = process.env, dataDir, pr
     for (const step of check.preSteps ?? []) {
       const remaining = Math.min(step.timeoutMs, check.timeoutMs - (Date.now() - started));
       if (remaining <= 0) throw Object.assign(Error("构建前置超过检查总时限"),{timedOut:true});
-      const [program, ...args] = step.argv;
-      let executable = program === "node" ? process.execPath : program;
-      if (program === "npm") {
-        const locations = [path.dirname(process.execPath), ...(env.PATH ?? "").split(path.delimiter)];
-        const cli = locations.map(location => path.join(location, "node_modules/npm/bin/npm-cli.js")).find(existsSync);
-        if (!cli) throw Error("找不到 npm-cli.js");
-        executable = process.execPath; args.unshift(cli);
-      }
+      const { executable, args, env: childEnv } = resolveCheckCommand(step.argv, env, preferredNode);
       const stepStarted=Date.now();
       const result = await new Promise((resolve, reject) => {
-        const child = spawn(executable, args, { cwd: root, env, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+        const child = spawn(executable, args, { cwd: root, env: childEnv, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
         let output = "", timedOut = false;
         const timer = setTimeout(() => { timedOut = true; child.kill(); }, remaining);
         for (const stream of [child.stdout, child.stderr]) stream.on("data", chunk => { output += chunk.toString().slice(0, Math.max(0, 64000 - output.length)); });

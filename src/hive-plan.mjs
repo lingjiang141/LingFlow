@@ -74,9 +74,13 @@ export function parseHiveTicket(document, { exists = () => false } = {}) {
   const resourceLine = ownership.split("\n").find(line => /^\s*[-*]\s*共享资源[:：]/.test(line));
   const resources = resourceLine && codeSpans(resourceLine);
   const riskPattern = /(?:等级|风险)(?:\*\*)?[:：]\s*(?:\*\*)?(low|medium|high|低[-–—]中|低|中|高)(?![a-z])/i;
-  const riskLine = sections.get("riskAssessment")?.split("\n").find((line) => riskPattern.test(line));
-  const level = riskLine?.match(riskPattern)?.[1]?.toLowerCase();
+  const riskLines = sections.get("riskAssessment")?.split("\n") ?? [];
+  const riskMatch = riskLines.map(line => riskPattern.exec(line)).find(Boolean);
+  const level = riskMatch?.[1].toLowerCase();
   const risk = ({ 低: "low", 中: "medium", 高: "high" })[level] ?? (level?.startsWith("低") ? "medium" : level);
+  const reasonLine = /^\s*(?:[-*]\s+)?(?:\*\*)?(?:风险理由|理由|原因)(?:\*\*)?[:：]\s*(?:\*\*)?(\S.*)$/;
+  const inlineReason = riskMatch?.input.slice(riskMatch.index + riskMatch[0].length).replace(/^[\s*:：（(,，—–-]+/, "").trim();
+  const riskReason = riskLines.map(line => reasonLine.exec(line)?.[1].trim()).find(Boolean) ?? (inlineReason || undefined);
   const browserE2E = acceptance.flatMap((ac) => {
     if (!/浏览器|Playwright/i.test(ac.text)) return [];
     const refs = codeSpans(ac.text);
@@ -85,7 +89,7 @@ export function parseHiveTicket(document, { exists = () => false } = {}) {
     return file && title ? [{ file, title, reason: "票面 " + ac.id + " 要求验证真实浏览器行为", covers: [ac.id] }] : [];
   });
   return { key: match[1], title: match[2], writes, reads, unresolved, unresolvedReads, acceptance, after, risk, resources,
-    attempts: route, riskReason: riskLine?.replace(/^\s*[-*]\s*/,""), brief: field("Objective"), stopConditions: field("Stop conditions"), browserE2E };
+    attempts: route, riskReason, brief: field("Objective"), stopConditions: field("Stop conditions"), browserE2E };
 }
 export function substituteTicket(input, inferred, warnings, prefix) {
   if (!inferred) return input;

@@ -77,7 +77,7 @@ function endState(reason) {
   return { outcome: "ended" };
 }
 
-export function createDshTelemetry(ctx) {
+export function createDshTelemetry(ctx, onTurnEnd) {
   const sessions = new WeakMap();
   function record(data, event) {
     if (!activityEvents.has(event?.type)) return;
@@ -115,7 +115,14 @@ export function createDshTelemetry(ctx) {
     return data;
   };
   ctx.on("session/event", (session, event) => {
-    if (session && activityEvents.has(event?.type)) record(get(session), event);
+    if (!session || !activityEvents.has(event?.type)) return;
+    const previousTurn = sessions.get(session)?.turn;
+    const data = get(session);
+    record(data, event);
+    if (event.type === "turn/end" && data.turn !== previousTurn && data.turn?.startedAt &&
+        data.turn.endedAt >= data.turn.startedAt && data.lifecycle.turn.turn === event.data?.turn) {
+      onTurnEnd?.(session);
+    }
   });
   ctx.on("agent/assistant-stream", ({ agent }) => {
     if (agent?.session) get(agent.session).activityAt = Date.now();

@@ -22,13 +22,13 @@ async function startWorker(dataDir, readOnly, execution) {
     resolveReady = resolve;
     rejectReady = reject;
   });
-  worker.on("message", ({ ready, id, result, error, verificationCode, violations, nextAction, unownedWrites, blockers, progress, inspection }) => {
+  worker.on("message", ({ ready, id, result, error, verificationCode, violations, nextAction, unownedWrites, blockers, rejected, progress, inspection }) => {
     if (ready) return resolveReady();
     const request = pending.get(id);
     if (!request) return;
     if (progress) return request.onProgress?.(progress);
     pending.delete(id);
-    if (error !== undefined) request.reject(Object.assign(Error(error), { verificationCode, violations, nextAction, unownedWrites, blockers }));
+    if (error !== undefined) request.reject(Object.assign(Error(error), { verificationCode, violations, nextAction, unownedWrites, blockers, rejected }));
     else {
       if (inspection && result && typeof result === "object") Object.defineProperty(result, inspectionMetadata, { value: inspection });
       request.resolve(result);

@@ -1,3 +1,4 @@
+import { reviewedDimensions } from "./helpers/evidence-fixture.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -41,7 +42,7 @@ async function deliver(t, { external = false, legacy = false } = {}) {
 
 function summarize(f) {
   return f.call("Lead", "summarize", { taskId: f.taskId, instructions: "Try the delivered version", decision: {
-    candidate: task(f).candidate, limits: "isolated fixture", acceptance: [{ id: "AC1", evidence: "verified", checkIds: ["independent"] }],
+    candidate: task(f).candidate, limits: "isolated fixture", dimensions: reviewedDimensions("independent"), acceptance: [{ id: "AC1", evidence: "verified", checkIds: ["independent"] }],
   } });
 }
 
@@ -55,6 +56,7 @@ async function commitNextTicket(f, file, contents, assertion) {
     ...(stage === "red" && { expectedOutput: "AssertionError" }),
   }));
   // The test and controller probe have different entry points and resolve the same project file.
+  f.wf.heartbeat(f.roles.map(role => ({ id: role.name, state: "idle", pending: 0, jobs: 0 })));
   const { tasks: [{ taskId }] } = f.call("Lead", "dispatchPlan", {
     requirementId: requirement.id, sources: { spec: "spec.md", tickets: "tickets.md", attempts: "attempts.md" },
     tickets: [{ key: "NEXT", developerId: f.roles.find(role => role.kind === "developer").id,

@@ -1,3 +1,4 @@
+import { reviewedDimensions } from "./helpers/evidence-fixture.mjs";
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fixture } from './helpers/evidence-fixture.mjs';
@@ -36,7 +37,7 @@ test('summarize exposes decision.testReview constraints and succeeds once with r
   assert.equal((await f.run('independent', false, 'Lead')).state, 'passed');
   const task = f.store.read().tasks[0]; assert.equal(task.state, 'ready');
   const args = { taskId: task.id, instructions: '按验收条款试用', decision: { candidate: task.candidate,
-    acceptance: [{ id: 'AC1', evidence: '已核对原候选与通过回执', checkIds: ['full'] }], limits: '无' } };
+    acceptance: [{ id: 'AC1', evidence: '已核对原候选与通过回执', checkIds: ['full'] }], limits: '无', dimensions: reviewedDimensions('full') } };
   const missing = f.call('Lead', 'summarize', args);
   assert.equal(missing.path, 'decision.testReview'); assert.ok(missing.remedy);
   assert.equal(missing.expected.maxLength, 16000); assert.equal(missing.trigger.path, 'report.manifest.testChanges');

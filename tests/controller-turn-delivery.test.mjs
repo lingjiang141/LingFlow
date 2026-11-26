@@ -66,6 +66,61 @@ test("controller returns accumulate across a turn and compaction, then queue onc
   assert.equal(f.prompts[0].mode, "queue");
 });
 
+test("the controller turn end restores a checked report that is still actionable", async t => {
+  const f = await setup(t);
+  f.emit("turn/start", 1);
+  f.agent.status = "running";
+  const report = f.notice(1);
+  f.call("Lead", "inspect", { taskId: f.taskId, section: "full" });
+  assert.deepEqual(f.heartbeat(), []);
+  const record = () => f.store.read().notices.find(notice => notice.id === report);
+  assert.equal(record().wakeSuppression?.reason, "controller-checked");
+  f.advance(1000);
+  f.emit("turn/end", 1);
+  f.agent.status = "idle";
+  f.advance(1000);
+  const wakes = f.heartbeat();
+  assert.deepEqual(wakes.flatMap(wake => wake.noticeIds), [report]);
+  const relay = createRelay(f.relayOptions);
+  await relay.accept(wakes);
+  await relay.accept(f.heartbeat());
+  assert.equal(f.prompts.length, 1);
+});
+
+test("a controller's own rearm waits for its turn and the host queue to settle", async t => {
+  const f = await setup(t);
+  const noticeId = f.notice(1);
+  f.store.change(state => state.wakes.push({
+    id: "old-wake", roleId: f.role.id, sessionId: f.agent.id, state: "failed",
+    closeReason: "delivery-loss-limit", at: Date.now(), failedAt: Date.now(),
+    autoRearmedAt: Date.now(), noticeIds: [noticeId],
+  }));
+  f.emit("turn/start", 1);
+  f.agent.status = "running";
+  assert.deepEqual(f.heartbeat(), []);
+  const args = { roleId: f.role.id, reason: "核对未读通知" };
+  const rearm = () => f.wf.call("Lead", "rearmWake", args, "same-rearm", "dsh", undefined, "dsh-adapter");
+  const queued = rearm();
+  assert.equal(queued.state, "queued");
+  assert.deepEqual(rearm(), queued);
+  f.agent.status = "idle";
+  f.emit("turn/end", 0);
+  assert.deepEqual(f.heartbeat(), []);
+  f.advance(1000);
+  f.emit("turn/end", 1);
+  f.agent.inbox.nextTurn.push({ id: "pending-user-message" });
+  assert.deepEqual(f.heartbeat(), []);
+  assert.equal(f.store.read().wakes.find(wake => wake.id === "old-wake").state, "failed");
+  f.agent.inbox.nextTurn.pop();
+  f.advance(1000);
+  const wakes = f.heartbeat();
+  assert.deepEqual(wakes.flatMap(wake => wake.noticeIds), [noticeId]);
+  const relay = createRelay(f.relayOptions);
+  await relay.accept(wakes);
+  await relay.accept(f.heartbeat());
+  assert.equal(f.prompts.length, 1);
+});
+
 test("DSH controller short cards lead with ticket results and keep complete evidence in the original ticket", async t => {
   const f = await setup(t);
   f.call("Lead", "inbox");

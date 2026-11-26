@@ -52,12 +52,20 @@ export async function apply(ctx, config) {
     });
     const value = await response.json();
     if (!response.ok) throw Error((value.code ? "[" + value.code + "] " : "") + (value.error || "LingFlow 请求失败") + (value.violations ? "\n" + JSON.stringify(value.violations) : "") +
-      (value.nextAction || value.unownedWrites || value.blockers ? "\n" + JSON.stringify({
-        nextAction: value.nextAction, unownedWrites: value.unownedWrites, blockers: value.blockers,
+      (value.nextAction || value.unownedWrites || value.blockers || value.rejected ? "\n" + JSON.stringify({
+        nextAction: value.nextAction, unownedWrites: value.unownedWrites, blockers: value.blockers, rejected: value.rejected,
       }) : ""));
     return value;
   };
-  const observe = createDshTelemetry(ctx);
+  let heartbeatBusy = false;
+  let turnEndPending = false;
+  const waitPolicy = createControllerWaitPolicy(ctx);
+  const observe = createDshTelemetry(ctx, (session) => {
+    if (turnEndPending || abort.signal.aborted) return;
+    if (!ctx.agents.list().some(agent => agent.session === session && waitPolicy.isController(agent))) return;
+    turnEndPending = true;
+    setImmediate(runHeartbeat);
+  });
   const relay = createRelay({
     file: path.join(config.dataDir, "dsh-admissions.json"),
     agents: ctx.agents,
@@ -135,7 +143,6 @@ export async function apply(ctx, config) {
       },
     }),
   ];
-  const waitPolicy = createControllerWaitPolicy(ctx);
   let bindingsRequest;
   const bindings = () => bindingsRequest ??= api("bindings", {}).then(({ sessions, controllerSessions = [] }) => {
     waitPolicy.update(controllerSessions, ctx.agents.list());
@@ -160,15 +167,16 @@ export async function apply(ctx, config) {
     if (waitPolicy.shouldYield(step)) return { kind: "reject" };
     return next?.();
   });
-  for (const agent of ctx.agents.list()) install(agent);
-  await watchdog.sweep().catch(error => ctx.logger?.("lingflow").warn(error.message));
-  health();
   let lastError = "";
   const deliveryErrors = new Set();
   const toolHealth = new Map();
-  const timer = setInterval(async () => {
-    if (timer.busy) return;
-    timer.busy = true;
+  for (const agent of ctx.agents.list()) install(agent);
+  await watchdog.sweep().catch(error => ctx.logger?.("lingflow").warn(error.message));
+  health();
+  async function runHeartbeat() {
+    if (heartbeatBusy || abort.signal.aborted) return;
+    heartbeatBusy = true;
+    turnEndPending = false;
     try {
       const diagnostics = relay.diagnostics();
       const agents = await watchdog.sweep();
@@ -217,9 +225,11 @@ export async function apply(ctx, config) {
         health("服务连接或投递暂不可用，请检查 LingFlow");
       }
     } finally {
-      timer.busy = false;
+      heartbeatBusy = false;
+      if (turnEndPending) setImmediate(runHeartbeat);
     }
-  }, 2000);
+  }
+  const timer = setInterval(runHeartbeat, 2000);
   ctx.effect(() => () => {
     clearInterval(timer);
     watchdog.dispose();

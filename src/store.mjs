@@ -65,9 +65,14 @@ export class Store {
       WHERE json_extract(e.data,'$.taskId')=? OR json_extract(o.input,'$.args.taskId')=?`;
     const total=this.db.prepare('SELECT count(*) AS total '+join).get(taskId,taskId).total;
     const items=this.db.prepare(`SELECT e.seq,e.at,e.kind,json_extract(e.data,'$.operationId') AS operationId,
-      CASE WHEN e.kind IN ('input.drop-requested','input.drop-completed','input.drop-obsolete') THEN e.data END AS dropDetails
+      CASE WHEN e.kind IN ('input.drop-requested','input.drop-completed','input.drop-obsolete') THEN e.data END AS dropDetails,
+      CASE WHEN e.kind IN ('supersede-task','abandon-task') AND json_type(e.data,'$.stopProof') = 'object' THEN e.data END AS scopeDetails
       ${join} ORDER BY e.seq DESC LIMIT ? OFFSET ?`).all(taskId,taskId,limit,offset)
-      .map(({dropDetails,...item})=>dropDetails ? {...item,inputDrop:JSON.parse(dropDetails)} : item);
+      .map(({dropDetails,scopeDetails,...item})=>({
+        ...item,
+        ...(dropDetails && {inputDrop:JSON.parse(dropDetails)}),
+        ...(scopeDetails && {scopeRelease:JSON.parse(scopeDetails)}),
+      }));
     return {taskId,section:'events',items,offset,limit,total,scanned:total,truncated:offset+items.length<total,
       nextOffset:offset+items.length<total?offset+items.length:null};
   }

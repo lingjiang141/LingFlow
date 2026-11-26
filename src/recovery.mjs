@@ -6,18 +6,19 @@ export function resumeTask(state, task, role, reason, now = Date.now()) {
   const developerStage = ["assigned", "rework", "paused"].includes(task.state) && !task.pausedFrom;
   const ownerId = task.state === "reviewing" ? task.assignee : developerStage ? task.developerId : null;
   const member = state.roles.find(member => member.id === ownerId);
-  if (ownerId) {
-    const status = ownerStatus(state, task, now, ownerId);
-    if (!status.silent) fail("责任正在执行或状态未确认：" + status.blockers.map(item => `${item.code}：${item.detail}`).join("；"));
-  }
+  const status = ownerId ? ownerStatus(state, task, now, ownerId) : null;
+  if (status && !status.silent && task.state !== "paused")
+    fail("责任正在执行或状态未确认：" + status.blockers.map(item => `${item.code}：${item.detail}`).join("；"));
   const previous = { writes: [...task.writes], state: task.state, deliveredAt: task.deliveredAt, deliveryIssue: task.deliveryIssue };
   if (developerStage) {
     task.resumeState = task.state === "rework" || task.reworkReason ? "rework" : "assigned";
     task.state = "queued";
     task.deliveredAt = null;
     task.resumePending = true;
-    member.resumeTaskAfter = now;
-    delete member.patrolEpisode;
+    if (member) {
+      member.resumeTaskAfter = now;
+      delete member.patrolEpisode;
+    }
   } else {
     task.state = task.pausedFrom ?? (task.state === "reviewing" ? "waiting_review" : task.state);
     delete task.pausedFrom;
@@ -27,9 +28,16 @@ export function resumeTask(state, task, role, reason, now = Date.now()) {
   task.waitReason = null;
   delete task.deliveryIssue;
   task.scheduleVersion = (task.scheduleVersion ?? 0) + 1;
+  const approval = task.checkRevisionApproval;
+  const checkRevisionRevoked = Boolean(approval && !approval.revokedAt);
+  if (checkRevisionRevoked) {
+    approval.revokedAt = now;
+    approval.revocationReason = "resumeTask";
+  }
   (task.scheduleHistory ??= []).push({ previous, reason, by: role.id, at: now, resumed: true });
   delete task.ownerSilentSince; delete task.ownerSilentForMs; delete task.ownerState; delete task.ownerSilentNotified;
-  return { state: "stored", taskId: task.id, scheduleVersion: task.scheduleVersion, recoveredBy: "resume", previousOwnerState: ownerId ? "silent" : "none" };
+  return { state: "stored", taskId: task.id, scheduleVersion: task.scheduleVersion, recoveredBy: "resume",
+    previousOwnerState: status?.ownerState ?? "none", ...(checkRevisionRevoked && { checkRevisionRevoked: true }) };
 }
 export function sessionIssue(task, reason, detail, now, attempt = 0) {
   task.deliveryIssue = { reason, detail, at: now, attempt };

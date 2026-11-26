@@ -175,10 +175,12 @@ export function readVerification(input, { root, writes, risk, warnings = [], pre
   for (const [index, check] of entries.entries()) {
     const at = ".checks[" + index + "]";
     const before = issues.length;
-    unknownFields(check, ["id","stage","argv","inputs","covers","timeoutMs","expectedExit","expectedOutput","failureOutput","deriveRed","redExpectedOutput","redExpectedExit","preSteps","requiredArtifacts","resources"], prefix+at, warnings);
+    unknownFields(check, ["id","stage","argv","inputs","covers","timeoutMs","expectedExit","expectedOutput","failureOutput","deriveRed","redExpectedOutput","redExpectedExit","redMode","preSteps","requiredArtifacts","resources"], prefix+at, warnings);
     const id = attempt(at+".id",checkShape.id,"为检查分配唯一稳定编号",()=>key(check?.id,"检查"));
     const stage = check?.stage;
     if (!stages.includes(stage)) add(at+".stage","未知检查阶段",stages,"选择适用阶段");
+    if (check?.redMode !== undefined && (stage !== "red" || check.redMode !== "auto-revert"))
+      add(at+".redMode", "redMode 仅支持红检查的 auto-revert", "auto-revert", "在显式 red 检查声明隔离取红模式");
     const argv = attempt(at+".argv",checkShape.argv,"使用参数数组，不用 shell 字符串",()=>commandArgs(normalizeBrowserArgv(check?.argv)),[]);
     const covers = attempt(at+".covers",stage==="regression"?[]:checkShape.covers,"引用现有 AC；regression 不计 AC 覆盖",()=>[...new Set(list(check?.covers ?? (stage==="regression"?[]:undefined),"检查覆盖"))],[]);
     if ((stage==="regression" ? covers.length : !covers.length || covers.some((ac)=>!acIds.has(ac))))
@@ -211,6 +213,7 @@ export function readVerification(input, { root, writes, risk, warnings = [], pre
       remedy:'按构建实测下限为新票预留至少三倍前置预算，并给每一步填写合理 timeoutMs；本提示不修改冻结检查。'});
     if (controller && preparation.preSteps?.length) add(at+".preSteps", "主控短探针不能执行构建前置", [], "将构建交开发检查");
     if (issues.length===before) checks.push({ id, stage, argv, covers, inputs, timeoutMs, expectedExit, expectedOutput,
+      ...(check.redMode && { redMode: check.redMode }),
       ...(resources.length && { resources }), ...(failureOutput&&{failureOutput}), ...(preparation.requiredArtifacts?.length && preparation) });
   }
   alignBrowserArgv(checks, input.browserE2E, warnings, prefix, entries);
@@ -644,20 +647,70 @@ function equivalentCommitPaths(root, task, git, conflicts) {
   });
 }
 
-export function protectsAdmittedWrites(task) {
+export function admittedReadPromotions(task) {
+  const baseline = task.baseline;
+  if (!baseline) return [];
+  const inherited = baseline.admissionOwnedDirty ?? task.ownedDirty ?? [];
+  const writeSet = new Set(scopePaths(task.writes).map(file => file.toLowerCase()));
+  const baseWrites = baseline.cleanWrites
+    ? [...baseline.cleanWrites, ...inherited.filter(file => writeSet.has(file.toLowerCase()))]
+    : (baseline.admissionWrites ?? task.writes);
+  const added = scopePaths(task.writes).filter(file =>
+    !coversPath(baseWrites, file) || (baseline.admissionWrites && !coversPath(baseline.admissionWrites, file)));
+  const widened = baseline.widenedWrites ?? [];
+  const unrecorded = added.filter(file => !coversPath(widened, file));
+  if (!unrecorded.length) return [];
+  const readHistory = [
+    ...(task.reads ?? []),
+    ...(task.verification?.checks?.flatMap(check => check.requiredArtifacts ?? []) ?? []),
+    ...(task.scheduleHistory ?? [])
+      .filter(({ previous }) => previous?.reads && (!previous.baseline || previous.baseline.head === baseline.head))
+      .flatMap(({ previous }) => previous.reads),
+  ];
+  return unrecorded.filter(file => overlaps([file], readHistory));
+}
+
+export function protectsAdmittedWrites(task, { allowPromotedReads = false } = {}) {
   const baseline = task.baseline;
   const sorted = paths => scopePaths(paths).map(file => file.toLowerCase()).sort();
   const same = (a, b) => JSON.stringify(sorted(a)) === JSON.stringify(sorted(b));
   const inherited = baseline.admissionOwnedDirty ?? task.ownedDirty ?? [];
-  if (baseline.admissionWrites && !same(baseline.admissionWrites, task.writes)) return false;
   if (!inherited.every(file => coversPath(task.writes, file))) return false;
+  if (baseline.admissionWrites && !baseline.admissionWrites.every(file => coversPath(task.writes, file))) return false;
+  if (baseline.cleanWrites && !baseline.cleanWrites.every(file => coversPath(task.writes, file))) return false;
+  if ((baseline.postDriftReadPromotions ?? []).some(file => coversPath(task.writes, file))) return false;
   if (!baseline.cleanWrites) {
     // Old baselines omitted the whole clean write set when any admitted path was dirty.
-    return inherited.length > 0 && !(task.scheduleHistory ?? []).some(({ previous }) =>
-      previous?.writes && (!previous.baseline || previous.baseline.head === baseline.head) && !same(previous.writes, task.writes));
+    if (!inherited.length) return false;
+    if ((task.scheduleHistory ?? []).some(({ previous }) =>
+      previous?.writes && (!previous.baseline || previous.baseline.head === baseline.head) &&
+      !previous.writes.every(file => coversPath(task.writes, file)))) return false;
+    if (!baseline.admissionWrites || same(baseline.admissionWrites, task.writes)) return true;
   }
   const writeSet = new Set(sorted(task.writes));
-  return same([...baseline.cleanWrites, ...inherited.filter(file => writeSet.has(file.toLowerCase()))], task.writes);
+  const baseWrites = baseline.cleanWrites
+    ? [...baseline.cleanWrites, ...inherited.filter(file => writeSet.has(file.toLowerCase()))]
+    : (baseline.admissionWrites ?? task.writes);
+  if (same(baseWrites, task.writes) && (!baseline.admissionWrites || same(baseline.admissionWrites, task.writes)))
+    return true;
+  const added = scopePaths(task.writes).filter(file =>
+    !coversPath(baseWrites, file) || (baseline.admissionWrites && !coversPath(baseline.admissionWrites, file)));
+  if (!added.length) return true;
+  const widened = baseline.widenedWrites ?? [];
+  const unrecorded = added.filter(file => !coversPath(widened, file));
+  if (!unrecorded.length) return true;
+  if (!allowPromotedReads && admittedReadPromotions(task).length) return false;
+  // Already-persisted tickets widened before baseline.widenedWrites was recorded:
+  // require proof from the matching redBaseline at the same baseline head or an
+  // additive scheduleHistory record on that baseline.
+  const redMatches = Boolean(task.redBaseline?.writes &&
+    (task.redBaseline.sourcesHead ?? task.redBaseline.head) === (baseline.sourcesHead ?? baseline.head) &&
+    unrecorded.every(file => coversPath(task.redBaseline.writes, file)));
+  const historyWidened = unrecorded.every(file => (task.scheduleHistory ?? []).some(({ previous }) =>
+    previous?.writes && (!previous.baseline || previous.baseline.head === baseline.head) &&
+    previous.writes.every(old => coversPath(task.writes, old)) &&
+    !coversPath(previous.writes, file)));
+  return redMatches || historyWidened;
 }
 
 export function baselineDrift(root, task, git = gitState(root), protectedPaths = [], { compareCandidate = false } = {}) {
@@ -719,14 +772,17 @@ function committedSource(root, commit, file, { allowUnsupported = false } = {}) 
   return readGit(root, ["cat-file", "blob", match[1]], "buffer");
 }
 
-// Only Git-confirmed, clean paths outside the frozen implementation and inputs are retired.
-export function committedOutsideBaseline(root, task, drift, git, protectedPaths = []) {
+// Retire clean outside fingerprints proven by Git, including inputs explicitly
+// accepted by a committed-work rebind.
+export function committedOutsideBaseline(root, task, drift, git, protectedPaths = [], { confirmedCheckInputs = [] } = {}) {
   const base = task.baseline;
   if (!base?.other?.length || drift?.gitBlocker) return [];
   const committed = new Set(drift?.committedBetween ?? []);
   const dirty = new Set(git.dirty.map(file => file.toLowerCase()));
   const protectedScope = [...protectedOwnershipPaths(task), ...protectedPaths];
-  const candidates = base.other.filter(([file]) => !dirty.has(file.toLowerCase()) && !overlaps([file], protectedScope));
+  const confirmed = new Set(confirmedCheckInputs);
+  const candidates = base.other.filter(([file]) => !dirty.has(file.toLowerCase()) &&
+    (confirmed.has(file) && committed.has(file) || !overlaps([file], protectedScope)));
   if (!candidates.length) return [];
   // A history advance may already have moved base.head past the commit. Only use an
   // ancestor and a path which actually changed, never a foreign ownership claim alone.
@@ -918,6 +974,7 @@ export function assertOutsideScope(root, task, foreignWrites, git, pruned = []) 
       if (!git.tracked.has(file.toLowerCase()) && !included.has(file) &&
           (git.ignoredOutside?.has(file) || git.filter?.ignores(file)) && !overlaps([file], git.protectedPaths)) continue;
       if (controlDocument(task, file) || (inheritedHiveOutputs.has(file) && isUntrackedHiveOutput(task, file, untracked))) continue;
+      if (git.confirmedPeerFiles?.has(file) && !overlaps([file], git.protectedPaths)) continue;
       if (!old.has(file) && coversPath(foreignWrites, file)) continue;
       if (batch.metrics.scannedFiles % 128 === 0) commandProgress({ scannedFiles: batch.metrics.scannedFiles });
       const confirmed = old.has(file) && Object.hasOwn(base.confirmedForeignDirty ?? {}, file)

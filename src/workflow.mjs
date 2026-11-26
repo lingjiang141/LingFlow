@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { inspectedEntities, selectWakeNotices, inspectionMetadata, inspectionCommands, roleHasOpenResponsibility, isSilentNotice, resumeText, silentResumeText } from "./controller-notices.mjs";
+import { admissionNoticeKind, controllerPassiveNotice, currentCheckRevisionNotice, inspectedEntities, selectWakeNotices, inspectionMetadata, inspectionCommands, roleHasOpenResponsibility, isSilentNotice, resumeText, silentResumeText } from "./controller-notices.mjs";
 import { operationIdIssue, commandSignature, writeSignatures, summarizeExample, testReviewEvidence } from "./compliance-errors.mjs";
+import { dispatchPlan, dispatchReadOnlyTask, materializePlan, prepareDependencyEdit, previewPlan, readsFor, retainDependencyReceipts, verificationMode } from "./dispatch-plan.mjs";
 import { checkStatusResponse } from "./check-status-response.mjs";
 import { proveCommitPartition } from "./commit-partition.mjs";
 import { checkEvidenceFacts } from "./check-evidence.mjs";
@@ -10,17 +11,20 @@ import { activeWake, normalizeWake, consumeWake, requeueWake, mergeWakeNotices, 
   consolidateActiveWakes, handoffAge, lossDeadline, selfDiagnosticNotice, wakeGeneration, wakeRecipientBusy } from "./wake-state.mjs";
 import { relatedTestWarnings } from "./test-scope-hints.mjs";
 import { detectEnvironmentFailure, environmentRetry, taskEnvironmentFailure } from "./environment-failure.mjs";
-import { commandCall, findRecord, commandExamples } from "./command-arguments.mjs";
+import { commandCall, findRecord, commandExamples, requireText as text, requireValue as need } from "./command-arguments.mjs";
 import { bridgeToolsBlocker, recordBridgeTools } from "./bridge-tools.mjs";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import { assertPaths, coversPath, fileSha256, fingerprint, fingerprintEol, implementationFingerprint, overlaps, scopePaths } from "./files.mjs";
-import { redEvidence, redFailureObservation, redReceiptValid } from "./red-evidence.mjs";
+import { assertPaths, coversPath, fileSha256, fingerprint, fingerprintEntries, fingerprintEol, implementationFingerprint, overlaps, scopePaths } from "./files.mjs";
+import { redEvidence, redFailureObservation, redReceiptValid, redSnapshotSpec, redSnapshotValid } from "./red-evidence.mjs";
 import { resumeTask } from "./recovery.mjs";
+import { freezeRiskItems, reviewRiskItems, summarizeDimensions, summarizeRisk } from "./review-contract.mjs";
 import { ownerStatus, recoveryHint, updateOwnerSilence, recordOwnerHeartbeat, SILENCE_THRESHOLD_MS } from "./owner-status.mjs";
 import { inspectResponse } from "./inspect-response.mjs";
-import { turnBlocksDelivery, wakeCoalesceMs, wakeDelay } from "./wake-policy.mjs";
-import { artifactsIntact } from "./check-preparation.mjs";
+import { staleTurnMs, turnBlocksDelivery, wakeCoalesceMs, wakeDelay } from "./wake-policy.mjs";
+import { assertDeliveryProof, assertRoundDeliveryProof, checkContentMatches, checkInput, checkPaths, checkReference, deliveryCheck,
+  evidenceBase, hashCandidate, historicalCheck, intactOutput, invalidateCheckReceipts, leadCheck,
+  recordDeliveryVerification, sameCheckRecipe, upstreamRed, validCheck } from "./check-receipts.mjs";
 import { buildCacheStats } from "./build-cache.mjs";
 import { reconcileRoleDuplicates } from "./role-duplicates.mjs";
 import { assertStoppedTask, includeIgnoredScopeWrites, originalTaskWrites, releasedTaskScope, releaseStoppedScope, supersedeStoppedTask, abandonStoppedTask, supersessionHint, scopeConflictRemedy, scopeReplacementRemedy, taskScopeSchemas } from "./task-scope.mjs";
@@ -44,24 +48,19 @@ import {
   wakeText,
   dshWakeText,
 } from "./role-context.mjs";
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
-import { parseHiveTicket, splitHiveTickets, substituteTicket } from "./hive-plan.mjs";
-import { invalidPlan, planSchema, unknownFields, violation } from "./plan-schema.mjs";
-import { planningResourceWarnings, recommendDevelopers } from "./plan-scheduling.mjs";
+import { planSchema } from "./plan-schema.mjs";
 import { dshWakeSummary, wakeSummary } from "./wake-card.mjs";
 import { activeTaskIntervention, interventionHostJobsSettled, interventionPrompt } from "./task-intervention.mjs";
 import { formatQualitySummary } from "../ui/quality-summary.js";
-import { hasSpecChangeLog, planningDecisionOptions, readSpecVersion, specVersionSummary } from "./spec-revision.mjs";
+import { planningDecisionOptions, readSpecVersion, specVersionSummary } from "./spec-revision.mjs";
 import { assertCheckOwnership, browserCheckArgv, CONTROLLER_WAKE_BOUNDARY } from "./verification-policy.mjs";
 import { inspectRole, recordObservation } from "./patrol.mjs";
-import { assertTicketContract, readTicketChecks, readTicketContracts } from "./planning-contract.mjs";
+import { assertTicketContract } from "./planning-contract.mjs";
 import {
   assertScope,
   assertFingerprintMode,
   assertOutsideScope,
   baselineDrift,
-  cumulativeCheck,
   evidenceJobs,
   gitState,
   candidateDiff,
@@ -69,6 +68,7 @@ import {
   candidateFingerprint,
   candidateTreeFingerprint,
   snapshotFingerprint,
+  admittedReadPromotions,
   protectsAdmittedWrites,
   changedFromBaseline,
   committedFiles,
@@ -114,23 +114,8 @@ function assertCommitReference(value, sha, field) {
   verify(typeof value === "string" && /^[0-9a-f]{7,64}$/i.test(value) && sha.startsWith(value.toLowerCase()),
     "contract-invalid", `${field} 预期 ${sha}，收到 ${JSON.stringify(value)}；请按当前 Git 状态重试`);
 }
-function sameCheckRecipe(saved, current) {
-  // Legacy check rows may omit empty optional fields. A defined contract must still match exactly.
-  const normalize = check => Object.entries(check).filter(([, value]) => value != null && value !== "" &&
-    !(Array.isArray(value) && !value.length)).sort(([a], [b]) => a.localeCompare(b));
-  return JSON.stringify(normalize(saved)) === JSON.stringify(normalize(current));
-}
 const isController = (role, task) => role?.kind === "controller" && role.projectId === task.projectId;
 
-const need = (value, message) => {
-  if (!value) throw Error(message);
-  return value;
-};
-const text = (value, label) =>
-  need(
-    typeof value === "string" && value.trim() && value.length <= 16000,
-    label + "不能为空或过长",
-  ) && value.trim();
 function handoffFields(args) {
   const request = args.request === undefined ? undefined : text(args.request, "需要收信者处理的事项");
   const openItems = list(args.openItems ?? [], "开放事项", 20).map((item) => {
@@ -148,6 +133,13 @@ export function exactConfirmations(input, expected) {
     Object.keys(actual).length === Object.keys(expected).length &&
     Object.entries(expected).every(([file, digest]) => typeof digest === "string" && /^[a-f0-9]{64}$/i.test(digest) &&
       Object.hasOwn(actual, file) && actual[file] === digest);
+}
+function worktreeDirtyDigest(root, relative) {
+  const [file] = scopePaths([relative]);
+  const fileDigests = Object.create(null);
+  const tree = fingerprint(root, [file], [], undefined, { eol: "raw", fileDigests });
+  const digest = fileDigests[file];
+  return typeof digest === "string" && /^[a-f0-9]{64}$/i.test(digest) ? digest : tree;
 }
 const find = findRecord;
 const controller = (s, projectId) => {
@@ -192,9 +184,22 @@ const dispatchNotice = (task) => `dispatch:${task.id}:${task.revision}${task.sch
 const interventionPauseReason = "成员已停写，等待主控调整或释放原票";
 const pausedByIntervention = task => task.state === "paused" && task.waitReason === interventionPauseReason && !task.releasedScope;
 const jobIncludes = (job, taskId) => job.taskId === taskId || job.taskIds?.includes(taskId);
-const readsFor = (task) => [...task.reads, ...(task.verification?.checks.flatMap((check) => [...check.inputs, ...(check.requiredArtifacts ?? [])]) ?? [])];
+
+const frozenReadsFor = task => [...task.reads,
+  ...(task.verification?.checks.flatMap(check => check.requiredArtifacts ?? []) ?? [])];
 const occupied = (task) => !releasedTaskScope(task) && ["assigned", "rework", "paused", "blocked", "reviewing", "waiting_review", "waiting_verification"].includes(task.state);
-const leadCheck = (check) => ["independent", "controller"].includes(check.stage);
+
+const leadCheckReplacementFields = ["argv", "inputs", "timeoutMs", "expectedOutput", "failureOutput"];
+function probeContractReview(task) {
+  const review = task.reviews?.at(-1);
+  return task.state === "changes_requested" && task.risk === "high" && task.verification && task.candidate && review?.candidate === task.candidate &&
+    review.revision === task.revision && review.verdict === "changes" && review.classification === "contract-invalid" &&
+    ["requirements", "implementation", "system"].every(axis => review.dimensions?.[axis]?.state === "pass") ? review : undefined;
+}
+function leadCheckRevisionToken(task, check) {
+  const last = task.scheduleHistory?.findLast(entry => entry.leadCheckRevision?.checkId === check.id);
+  return createHash("sha256").update(JSON.stringify([check, last?.leadCheckRevision.id])).digest("hex");
+}
 const connected = (role, now = Date.now()) => Boolean(role.sessionId && role.connectedAt &&
   now - role.connectedAt < 15000 && role.state !== "offline" && role.bridgePresent !== false);
 const validQueueFingerprint = value => typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
@@ -237,12 +242,16 @@ function dispatchAvailability(role, now = Date.now(), allowResume = false) {
   if (!role.sessionId) return "unbound";
   if (!role.enabled) return "disabled";
   if (!connected(role, now)) return "offline";
-  if (role.state !== "idle" || role.pending !== 0 && !queueFingerprintForDelivery(role) || role.jobs > 0 || role.inputDrop) return "busy";
+  if (role.state !== "idle" || turnBlocksDelivery(role.observation) || role.pending !== 0 && !queueFingerprintForDelivery(role) || role.jobs > 0 || role.inputDrop) return "busy";
   if (role.resumeWake && !allowResume) return "resuming";
   if (role.jobs == null) return "jobs-unknown";
   return null;
 }
 const deliveryLabels = {
+  "role-running": "原会话的当前回合尚未结束",
+  "stale-turn": "原会话仍未结束，业务通知等待已超过阈值",
+  "task-intervention": "原票的干预请求优先处理",
+  "bridge-health-check": "等待桥接确认会话工具健康",
   "bridge-tools-missing": "bridge-tools-missing：成员工具尚未恢复，等待 DSH 桥接重新注册后投递",
   unbound: "尚未绑定成员会话",
   disabled: "成员的新投递已暂停",
@@ -263,7 +272,7 @@ const deliveryLabels = {
   stalled: "没有收到桥接的投递回执，请核对原会话和 LingFlow 连接",
 };
 const reviewedState = (task) => task.verification?.checks.some(leadCheck) ? "waiting_verification" : task.batchId ? "waiting_batch" : "ready";
-const verificationMode = (task) => task.verification ? "frozen" : task.readOnly ? "read-only" : "missing-contract";
+
 const requireContract = (task) => verify(task.verification || task.readOnly === true, "contract-invalid",
   `旧实施票没有冻结契约，不能走原生验收。保留原票历史，为剩余工作用 dispatchPlan 登记新的唯一票 key 和 verification；用 diagnoseTask ${JSON.stringify({ taskId: task.id })} 核对。`);
 
@@ -325,305 +334,6 @@ function writeExpansionRemedy(root, task) {
       reason: "已核对旧测试断言与本票批准的行为变化" } } };
 }
 
-function newTask(s, role, requirement, input, taskId, sources, ticketKey, warnings = [], prefix = "ticket") {
-  need(role?.kind === "controller" && role.projectId === requirement.projectId, "请在本项目已开启的 DSH 主控会话派单");
-  const worker = activeRole(s, input.developerId);
-  need(worker.projectId === requirement.projectId, "开发者无效");
-  need(["low", "medium", "high"].includes(input.risk), "风险必须为 low/medium/high");
-  const writes = scopePaths(input.writes), reads = scopePaths(input.reads ?? []);
-  const contextReads = scopePaths(input.contextReads ?? []);
-  const readOnly = input.readOnly === true;
-  need(input.readOnly === undefined || typeof input.readOnly === "boolean", "readOnly 必须为布尔值");
-  need(readOnly ? writes.length === 0 : writes.length > 0, "实施票须声明写入范围，只读票须设置 readOnly=true 且 writes=[]");
-  need(worker.kind === "developer", "角色不具备该任务的实施权限；新票仅派给开发成员");
-  const resources = list(input.resources ?? [], "共享资源").map((resource) => text(resource, "资源名称").toLowerCase());
-  const project = find(s.projects, requirement.projectId);
-  const developerChecksPending = input.developerChecks === true;
-  need(input.developerChecks === undefined || typeof input.developerChecks === "boolean", "developerChecks 须为布尔值");
-  need(!developerChecksPending || !readOnly && sources, "开发登记检查仅支持引用规划文件的实施票");
-  const verification = readOnly ? null : readVerification(input.verification,
-    { root: project.root, writes, risk: input.risk, warnings, prefix: prefix + ".verification", developerChecksPending });
-  if (verification) need(sources, "实施票必须引用已批准的规划文件");
-  const ownedDirty = scopePaths(input.ownedDirty ?? []);
-  need(ownedDirty.every((file) => coversPath(writes, file)), "已有改动授权必须在本票写入范围内");
-  return {
-    id: taskId, projectId: project.id, requirementId: requirement.id, ticketKey,
-    sources, title: text(input.title, "任务标题"), description: text(input.description, "任务及验收条件"),
-    dispatchedBy: role.id,
-    ...Object.fromEntries(["brief", "boundaries", "stopConditions", "riskReason"].filter((field) => input[field] !== undefined)
-      .map((field) => [field, text(input[field], field)])),
-    developerId: worker.id, assignee: worker.id, risk: input.risk, readOnly, dimensionsRequired: true,
-    writes, reads, contextReads, ...(readOnly && { readScopeKnown: Array.isArray(input.reads) || contextReads.length > 0 }),
-    resources: [...new Set(resources)], ownedDirty, verification, ...(verification && { candidateScope: 2, redContractVersion: 2 }),
-    ...(developerChecksPending && { developerChecksPending: true }),
-    dependencies: [], dependencyStages: {}, state: "queued", revision: 1,
-    acceptedAt: Date.now(), deliveredAt: null, reportedAt: null,
-    reports: [], reviews: [], questions: [],
-  };
-}
-
-function dependencyOrder(tasks) {
-  const byId = new Map(tasks.map(task => [task.id, task]));
-  const visiting = new Set(), complete = new Set(), order = [];
-  function visit(task) {
-    need(!visiting.has(task.id), "规划依赖存在循环：" + (task.ticketKey ?? task.id));
-    if (complete.has(task.id)) return;
-    visiting.add(task.id);
-    for (const dependency of task.dependencies ?? []) {
-      const predecessor = byId.get(dependency);
-      if (predecessor) visit(predecessor);
-    }
-    visiting.delete(task.id);
-    complete.add(task.id);
-    order.push(task);
-  }
-  for (const task of tasks) visit(task);
-  return order;
-}
-
-function resolveAfter(tasks, task, after, warnings = [], at = "after") {
-  const dependencies = [], dependencyStages = {};
-  for (const dep of list(after, "前置依赖")) {
-    unknownFields(dep, ["ticket", "taskId", "stage"], at, warnings);
-    const stage = dep?.stage ?? "verified";
-    need(["verified", "accepted"].includes(stage), "前置门槛必须为 verified 或 accepted");
-    need(!!dep?.ticket !== !!dep?.taskId, "前置依赖须指定 ticket 或 taskId");
-    const predecessor = dep.ticket ? need(tasks.find(item => item.projectId === task.projectId && item.ticketKey === dep.ticket),
-      "前置票不存在：" + dep.ticket) : find(tasks, dep.taskId);
-    need(predecessor.projectId === task.projectId, "依赖必须同项目");
-    need(predecessor.id !== task.id, "前置依赖不能自指");
-    need(!Object.hasOwn(dependencyStages, predecessor.id), "前置依赖重复");
-    dependencies.push(predecessor.id);
-    dependencyStages[predecessor.id] = stage;
-  }
-  return { dependencies, dependencyStages };
-}
-
-function validateDependencyEdit(state, task, next) {
-  const tasks = state.tasks.filter(item => item.projectId === task.projectId)
-    .map(item => item.id === task.id ? { ...item, ...next } : item);
-  if (!state.validationBatches.some(batch => batch.projectId === task.projectId)) {
-    dependencyOrder(tasks);
-    return;
-  }
-  const ancestors = new Map();
-  for (const item of dependencyOrder(tasks)) {
-    ancestors.set(item.id, new Set((item.dependencies ?? []).flatMap(dep => [dep, ...(ancestors.get(dep) ?? [])])));
-  }
-  for (const batch of state.validationBatches.filter(item => item.projectId === task.projectId)) {
-    need(!batch.taskIds.some(id => batch.taskIds.some(peer => ancestors.get(id)?.has(peer))),
-      "调度会使同批次互等，请主控先调整累计验证的分组方案");
-  }
-}
-
-function retainDependencyReceipts(task, next) {
-  if (!task.dependencyReceipts) return;
-  for (const dependency of Object.keys(task.dependencyReceipts))
-    if (!next.dependencies.includes(dependency) || (task.dependencyStages?.[dependency] ?? "verified") !== next.dependencyStages[dependency])
-      delete task.dependencyReceipts[dependency];
-}
-
-function freezePlan(s, role, args, preview = false, materialize = false) {
-  const requirement = find(s.requirements, args.requirementId);
-  need(role?.kind === "controller" && role.projectId === requirement.projectId, "请在本项目已开启的 DSH 主控会话派单");
-  const project = find(s.projects, role.projectId);
-  let documents;
-  try { documents = planSources(project.root, args.sources, true); } catch (error) {
-    throw invalidPlan([violation("sources", error.message, planSchema.sources, "指定存在的项目相对规划文件或 issues 目录")]);
-  }
-  const sources = Object.fromEntries(Object.entries(documents).map(([name, doc]) => [name, { file: doc.file, digest: doc.digest }]));
-  const specVersion = readSpecVersion(documents.spec.text);
-  const planId = id();
-  const ticketDocuments = Object.entries(documents).filter(([name]) => name === "tickets" || name.startsWith("ticket:"));
-  const contracts = new Map(), hiveTickets = new Map(), ticketChecks = new Map();
-  const violations = [], warnings = [], normalized = [];
-  if (!specVersion || !hasSpecChangeLog(documents.spec.text)) {
-    const missing = [!specVersion && "Version: N", !hasSpecChangeLog(documents.spec.text) && "## 变更记录"].filter(Boolean);
-    violations.push(violation("sources.spec", `规格缺少 ${missing.join("、")}`, "Version: 1 和 ## 变更记录",
-      "在 spec 顶部补版本及变更记录，再用相同参数执行 previewPlan，随后 dispatchPlan"));
-  }
-  unknownFields(args, ["requirementId","sources","tickets","batches","developerIds"], "plan", warnings);
-  unknownFields(args.sources, ["spec","tickets","ticketsDir","attempts"], "sources", warnings);
-  for (const [name, document] of ticketDocuments) {
-    let declared;
-    try { declared = readTicketContracts(document); } catch(error) {
-      violations.push(violation("sources."+name,error.message,{ticket:"R35-01",requiredWrites:[],requiredTestWrites:[],requiredAcceptance:["AC-1"]},"修正机读约束块，保留工单正文"));
-      continue;
-    }
-    for(const [key, contract] of declared) {
-      if (contracts.has(key)) violations.push(violation("sources."+name,"重复的票面契约："+key,"每票一个块","移除重复引用或重复块"));
-      else contracts.set(key,contract);
-    }
-    let parsed;
-    try { parsed = splitHiveTickets(document).map((part) => parseHiveTicket(part, { exists: (file) => existsSync(resolve(project.root,file)) })); }
-    catch(error) { violations.push(violation("sources."+name,error.message,"项目相对路径","在派发字段填写有效相对路径，核对票面中的越界或无效引用")); continue; }
-    for (const hive of parsed) {
-      if (hiveTickets.has(hive.key)) violations.push(violation("sources."+name,"重复的 Hive H1 票号："+hive.key,"每票一个 H1","选择唯一原票文件"));
-      else hiveTickets.set(hive.key,{...hive,name});
-    }
-    try {
-      const keys = [...new Set([...declared.keys(), ...parsed.map(ticket => ticket.key)])];
-      for (const [key, checks] of readTicketChecks(document, keys.length === 1 ? keys[0] : undefined)) {
-        need(keys.includes(key), "lingflow-checks 票号与所在文档不匹配：" + key);
-        need(!ticketChecks.has(key), "重复的 lingflow-checks：" + key);
-        ticketChecks.set(key, checks);
-      }
-    } catch (error) {
-      violations.push(violation("sources."+name, error.message, null, "修正对应票的 lingflow-checks JSON 围栏"));
-    }
-    if (!parsed.length && name.startsWith("ticket:") && !declared.size)
-      violations.push(violation("sources."+name, "找不到票面 H1："+document.file, "# 票 R35-01：标题", "选择原始票面文件，或使用含 lingflow-contract 的原生票面"));
-  }
-  if (materialize) {
-    const developers = s.roles.filter(member => member.projectId === project.id && member.kind === "developer" && !member.archivedAt);
-    need(developers.length, "本项目没有可用开发成员");
-    const keys = [...new Set([...hiveTickets.keys(), ...contracts.keys()])];
-    const selected = recommendDevelopers(developers, s.tasks, keys, args.developerIds,
-      member => dispatchAvailability(member) === null && !s.tasks.some(task => task.assignee === member.id && occupied(task)) &&
-        !s.checkJobs.some(job => job.requester === member.id && activeCheck(job)));
-    const tickets = keys.map((ticket, index) => {
-      const contract = contracts.get(ticket), hive = hiveTickets.get(ticket);
-      if (!contract) violations.push(violation(`tickets[${ticket}].ticketContract`, "缺少 lingflow-contract", null, "在未冻结的新票补齐机读契约，旧票使用副本转录"));
-      if (!ticketChecks.has(ticket) && !contract?.developerChecks) violations.push(violation(`tickets[${ticket}].verification.checks`, "缺少 lingflow-checks，不能推测实际检查或红标记", null,
-        "声明真实 checks 和 browserE2E；仅有自然语言检查描述无法直接派发"));
-      return { key: ticket, developerId: selected[index],
-        ...(contract && { writes: scopePaths([...contract.requiredWrites, ...contract.requiredTestWrites, ...(hive?.writes ?? [])]) }) };
-    });
-    if (violations.length) throw invalidPlan(violations, warnings);
-    args = { requirementId: args.requirementId, sources: args.sources, tickets };
-  }
-  if (!Array.isArray(args.tickets) || !args.tickets.length || args.tickets.length > 30)
-    throw invalidPlan([violation("tickets", "规划须含 1–30 张票", planSchema.tickets, "按票编号分批登记")]);
-  const inputs = args.tickets;
-  const seenKeys = new Set();
-  const byKey = new Map();
-  const collect = (path,error,expected,remedy) => violations.push(...(error.violations ?? [violation(path,error.message,expected,remedy)]));
-  for (const [index, raw] of inputs.entries()) {
-    const prefix = "tickets["+(raw?.key ?? index)+"]";
-    try {
-      const ticketKey = key(raw?.key,"票");
-      need(!seenKeys.has(ticketKey) && !s.tasks.some((t)=>t.projectId===project.id&&t.ticketKey===ticketKey),"票编号已存在，请沿原票续接："+ticketKey);
-      seenKeys.add(ticketKey);
-      unknownFields(raw,["key","developerId","title","description","brief","boundaries","stopConditions","risk","riskReason","writes","reads","contextReads","resources","ownedDirty","after","readOnly","verification","browserE2E","developerChecks","upstreamRedTaskId"],prefix,warnings);
-      const hive=hiveTickets.get(ticketKey);
-      if (hiveTickets.size && !hive && !raw.readOnly) need(contracts.has(ticketKey),"未找到匹配的 Hive H1："+ticketKey);
-      const merged = {...raw};
-      const contract = contracts.get(ticketKey), checks = ticketChecks.get(ticketKey);
-      merged.developerChecks ??= contract?.developerChecks;
-      if (merged.developerChecks) need(contract, "由开发登记检查须有 lingflow-contract 约束写入、测试和 AC");
-      if ((checks || merged.developerChecks) && contract && !raw.readOnly)
-        merged.writes ??= scopePaths([...contract.requiredWrites, ...contract.requiredTestWrites, ...(hive?.writes ?? [])]);
-      if (raw.verification !== undefined) {
-        if (checks) warnings.push({ path: prefix + ".verification",
-          message: "同时提供 lingflow-checks 与 verification，使用调用方 verification；仍须满足票面契约" });
-      } else if ((checks || merged.developerChecks) && !raw.readOnly) {
-        need(contract, "使用 lingflow-checks 须同时提供匹配的 lingflow-contract");
-        merged.verification = { ...checks, testWrites: contract.requiredTestWrites };
-      }
-      if (raw.browserE2E !== undefined) {
-        need(raw.verification?.browserE2E === undefined || JSON.stringify(raw.verification.browserE2E)===JSON.stringify(raw.browserE2E),"票根和 verification.browserE2E 不一致，请只保留一份");
-        merged.verification={...merged.verification,browserE2E:raw.browserE2E};
-        warnings.push({path:prefix+".browserE2E",message:"已归并到 verification.browserE2E"});
-      }
-      const inferred = hive && contract && !hive.writes.length && !hive.unresolved.length
-        ? { ...hive, writes: scopePaths([...contract.requiredWrites, ...contract.requiredTestWrites]) } : hive;
-      const input=substituteTicket(merged,inferred,warnings,prefix);
-      const refs=Object.fromEntries(Object.entries(sources).filter(([name])=>!name.startsWith("ticket:")));
-      const ticketSource = hive?.name ?? ticketDocuments.find(([, document])=>document.file===contracts.get(ticketKey)?.source)?.[0];
-      if(ticketSource) refs.tickets=sources[ticketSource];
-      const task={...newTask(s,role,requirement,input,id(),refs,ticketKey,warnings,prefix),planId,
-        ...(specVersion && { specVersion })};
-      if (raw.upstreamRedTaskId !== undefined) {
-        const upstream = s.tasks.find(item => item.id === raw.upstreamRedTaskId && item.projectId === project.id && item.verification);
-        need(upstream && task.ownedDirty.length && !task.readOnly, "承接红证据须指定本项目实际有冻结检查的 upstreamRedTaskId，并核对 ownedDirty");
-        task.upstreamRedTaskId = upstream.id;
-      }
-      need(task.readOnly || !contracts.size || contract,"缺少 "+ticketKey+" 的 lingflow-contract");
-      assertTicketContract(task,contract);
-      if(contract) task.ticketContract=contract;
-      for (const hit of relatedTestWarnings(project.root, task))
-        warnings.push({ path: prefix + ".writes", ...hit,
-          message: `可能被本票变更影响且未列入写集的测试：${hit.file}:${hit.line}。请核对旧断言后补齐范围。` });
-      byKey.set(ticketKey,task);
-      normalized.push(input);
-    } catch(error) {
-      if (raw?.verification === undefined && ticketChecks.has(raw?.key) && error.violations) {
-        const source = contracts.get(raw.key)?.source;
-        for (const issue of error.violations) {
-          if (issue.repair && !issue.repair.requiresInput && source)
-            issue.repair = { ...issue.repair, source, fence: "lingflow-checks" };
-        }
-      }
-      collect(prefix,error,planSchema.tickets[0],"补齐这张票的派发字段；保留原票正文");
-    }
-  }
-  for(const input of normalized) {
-    const task=byKey.get(input.key);
-    const at="tickets["+input.key+"].after";
-    try {
-      const dependencies = list(input.after === undefined ? [] : input.after, "前置依赖");
-      for (const needed of hiveTickets.get(input.key)?.after ?? []) {
-        const counterpart = byKey.get(needed.ticket) ?? s.tasks.find((t)=>t.projectId===project.id&&t.ticketKey===needed.ticket);
-        const provided = dependencies.find((dep)=>dep?.ticket===needed.ticket || (counterpart && dep?.taskId===counterpart.id));
-        if (!provided) {
-          warnings.push({path:at,message:"票面声明的前置未被采用",value:needed});
-        } else if (provided.stage === "accepted" && needed.stage === "verified") {
-          warnings.push({ path: at, message: `前置 ${needed.ticket} 被设为等待用户验收。技术前置请选择 verified；仅用户明确要求验收后再推进时保留 accepted。`, value: provided });
-        }
-      }
-      input.after = dependencies;
-      const resolved = dependencies.filter(dep => !dep?.ticket || byKey.has(dep.ticket) || !inputs.some(item => item?.key === dep.ticket));
-      Object.assign(task, resolveAfter([...byKey.values(), ...s.tasks], task, resolved, warnings, at));
-    } catch(error) { collect(at,error,[{ticket:"R35-01",stage:"verified"}],"引用同项目实际前置票"); }
-  }
-  if(violations.length) throw invalidPlan(violations, warnings);
-  const byId = new Map([...byKey.values()].map((task) => [task.id, task]));
-  let order;
-  try { order = dependencyOrder([...byKey.values()]); }
-  catch(error) { throw invalidPlan([violation("tickets.after",error.message,[{ticket:"R35-01",stage:"verified"}],"只保留实际依赖，取消互相等待的边")]); }
-  warnings.push(...planningResourceWarnings(order, s.tasks.filter(task => task.projectId === project.id), documents));
-  for (const task of order) for (const dependency of task.dependencies) {
-    const peer = s.tasks.find(peer => peer.id === dependency);
-    if (!/^[a-f0-9]{40,64}$/.test(peer?.confirmedCommit?.to ?? "") || task.dependencyStages?.[dependency] === "accepted") continue;
-    try {
-      readGit(project.root, ["merge-base", "--is-ancestor", peer.confirmedCommit.to, "HEAD"]);
-      warnings.push({ path: `tickets.${task.ticketKey}.after`, kind: "dependency-already-committed",
-        message: `${peer.ticketKey} 的候选已确认入库于 ${peer.confirmedCommit.to}。若只需现有代码，可改为声明实际 reads；保留 verified 边则继续要求有效验证。` });
-    } catch { /* The recorded commit is not a proven ancestor of the active checkout. */ }
-  }
-  const frozenBatches = [];
-  let batches;
-  try { batches = list(args.batches ?? [], "累计检查批次", 15); }
-  catch(error) { throw invalidPlan([violation("batches",error.message,[],"用数组声明累计检查；没有批次则省略")]); }
-  for (const [index,input] of batches.entries()) { try {
-    unknownFields(input, ["key","tickets","argv","inputs","covers","resources","timeoutMs","expectedOutput","failureOutput"], "batches["+index+"]",warnings);
-    const members = [...new Set(list(input?.tickets, "批次成员"))].map((name) => {
-      const member = byKey.get(name);
-      return need(member?.verification && !member.batchId && member, "累计检查仅支持同一计划中未编入批次的实施票");
-    });
-    need(members.length >= 2, "共享累计检查至少需要两张成员票");
-    const names = new Set(members.map((task) => task.id));
-    const ancestors = (task) => task.dependencies.some((dep) => names.has(dep) || (byId.has(dep) && ancestors(byId.get(dep))));
-    need(!members.some(ancestors), "批次成员不能等待同批次的最终验证或用户验收");
-    for (const a of members) for (const b of members)
-      need(a === b || !overlaps(a.writes, [...b.writes, ...readsFor(b)]), "共享累计检查只合并能同时稳定的候选");
-    const check = cumulativeCheck(input, members, project.root);
-    const batch = { id: id(), projectId: project.id, taskIds: members.map((task) => task.id), check, state: "waiting" };
-    for (const member of members) member.batchId = batch.id;
-    frozenBatches.push(batch);
-  } catch(error) { collect("batches["+index+"]",error,{key:"batch",tickets:["A","B"],argv:["node","verify.cjs"],inputs:["verify.cjs"],covers:[{ticket:"A",acceptance:["AC-1"]},{ticket:"B",acceptance:["AC-1"]}]},"核对批次成员、实际输入和覆盖；不能批次互等或冲突"); } }
-  if(violations.length) throw invalidPlan(violations, warnings);
-  if (materialize) return { state: "valid", warnings, args, checks: order.map(task => ({
-    ticket: task.ticketKey, checks: task.verification.checks, browserE2E: task.verification.browserE2E,
-    ...(task.developerChecksPending && { developerChecksPending: true }),
-  })) };
-  if (preview) return { state: "valid", violations: [], warnings, sources, tickets: order.map((task) => ({ key: task.ticketKey, writes: task.writes, reads: task.reads, after: normalized.find((input)=>input.key===task.ticketKey)?.after ?? [], verification: task.verification, verificationMode: verificationMode(task), ...(task.developerChecksPending && { developerChecksPending: true }) })) };
-  s.validationBatches.push(...frozenBatches);
-  s.tasks.push(...order);
-  s.plans.push({ id: planId, projectId: project.id, requirementId: requirement.id, documents, createdAt: Date.now(),
-    ...(specVersion && { specVersion }) });
-  return { receipt: "accepted", planId, warnings, tasks: order.map((task) => ({ key: task.ticketKey, taskId: task.id })) };
-}
 function saveRoleProfile(s, role, args) {
   const name = text(args.name === undefined ? role.name : args.name, "成员名称");
   const identityPrompt = args.identityPrompt ?? role.identityPrompt ?? "";
@@ -727,6 +437,7 @@ export class Workflow {
       const role=s.roles.find(role=>role.id===notice.roleId);
       if(selfDiagnosticNotice(notice)) Object.assign(notice,{selfDiagnostic:true,actionable:false});
       else if(role && isSilentNotice(role,notice)) Object.assign(notice,{silent:true,actionable:false});
+      else if(role?.kind === "controller" && controllerPassiveNotice(notice)) notice.actionable = false;
       else if(typeof notice.actionable!=='boolean') notice.actionable=role?Boolean(selectWakeNotices(s,role,[notice]).notices[0]?.actionable):false;
     }
   }
@@ -739,7 +450,10 @@ export class Workflow {
     );
   }
   notice(s, roleId, key, summary, taskId = null, silent = false) {
-    if (!s.notices.some((n) => n.roleId === roleId && n.key === key)) {
+    const admissionKind = admissionNoticeKind(key);
+    const existing = s.notices.find(notice => notice.roleId === roleId && (notice.key === key ||
+      admissionKind && taskId && taskId === notice.taskId && admissionNoticeKind(notice.key) === admissionKind));
+    if (!existing) {
       const notice = {
         id: id(),
         roleId,
@@ -757,7 +471,7 @@ export class Workflow {
       s.notices.push(notice);
       return notice;
     }
-    return s.notices.find(notice=>notice.roleId===roleId&&notice.key===key);
+    return existing;
   }
   noticeMessage(s, notice) {
     const [kind, ref] = notice.key.split(":");
@@ -806,6 +520,15 @@ export class Workflow {
   retire(s, taskId) {
     for (const n of s.notices)
       if (n.taskId === taskId && !n.readAt && !/^(question|answer|spec-impact):/.test(n.key)) n.readAt = Date.now();
+  }
+  retireRoleSession(s, target, now, reason) {
+    delete target.pendingWakeRearm;
+    delete target.controllerWakeThrough;
+    for (const wake of s.wakes)
+      if (wake.roleId === target.id && !wake.consumedAt && (activeWake(wake) || wake.state === "failed"))
+        consumeWake(wake, now, reason);
+    for (const request of s.requests)
+      if (request.roleId === target.id && !request.confirmed && !request.cancelledAt) request.cancelledAt = now;
   }
   recordDelivery(s, notice, roleId, at) {
     if (!notice.taskId) return;
@@ -864,6 +587,75 @@ export class Workflow {
       wake.loggedAttempt = outcome.attempt;
     }
   }
+  wakeBlockReason(s, role, now) {
+    if (role.pendingToolHealthCheck) return "bridge-health-check";
+    if (bridgeToolsBlocker(role)) return "bridge-tools-missing";
+    if (!role.sessionId) return "unbound";
+    if (!role.enabled) return "disabled";
+    if (!connected(role, now)) return "offline";
+    if (role.inputDrop) return "queued-input";
+    if (s.tasks.some(task => task.assignee === role.id && activeTaskIntervention(task)?.mode === "stop")) return "task-intervention";
+    if (turnBlocksDelivery(role.observation)) return isDshController(role) ? "controller-turn" : "role-running";
+    if (role.state !== "idle") return "role-running";
+    if (role.pending !== 0 && !queueFingerprintForDelivery(role)) return "queued-input";
+    if (!Number.isSafeInteger(role.jobs) || role.jobs < 0) return "jobs-unknown";
+    return role.jobs > 0 ? "background-jobs" : null;
+  }
+  rearmWake(s, role, now, reason) {
+    return rearmLostWake(s, role, now, (kind, data) => this.store.event(kind, data),
+      (recipient, unread) => selectWakeNotices(s, recipient, unread, { ignoreFailed: true }).notices,
+      { reason, manual: true });
+  }
+  finishControllerTurnDelivery(s, role, now) {
+    const turn = role.observation?.turn;
+    if (!turn?.startedAt || !(turn.endedAt >= turn.startedAt) || this.wakeBlockReason(s, role, now)) return;
+    // The next selection can reconsider unread notices inspected during this turn.
+    role.controllerWakeThrough = Math.max(role.controllerWakeThrough ?? 0, turn.endedAt);
+    const request = role.pendingWakeRearm;
+    if (!request || request.sessionId !== role.sessionId || turn.endedAt < request.requestedAt) return;
+    const rearmed = this.rearmWake(s, role, now, request.reason);
+    delete role.pendingWakeRearm;
+    this.store.event("wake.rearm-after-turn", { roleId: role.id, operationId: request.operationId,
+      turnId: turn.id, state: rearmed ? "pending" : "no-failed-wake", wakeId: rearmed?.wakeId });
+  }
+  deliveryBlock(s, role, now = Date.now(), reason = this.wakeBlockReason(s, role, now)) {
+    if (!reason || reason === "coalescing-window") return;
+    const handedOff = new Set(s.wakes.filter(wake => wake.roleId === role.id && wake.sessionId === role.sessionId &&
+      wake.state === "enqueued" && activeWake(wake)).flatMap(wake => wake.payloadNoticeIds ?? wake.noticeIds));
+    const unread = s.notices.filter(notice => notice.roleId === role.id && !notice.readAt && !handedOff.has(notice.id));
+    const notices = selectWakeNotices(s, role, unread).notices.filter(notice => notice.actionable);
+    if (!notices.length) return;
+    const since = Math.min(...notices.map(notice => notice.at));
+    const waitedMs = Math.max(0, now - since);
+    const turn = role.observation?.turn;
+    const openTurn = turn?.startedAt && !(turn.endedAt >= turn.startedAt);
+    const threshold = staleTurnMs(this.execution);
+    const stale = ["role-running", "controller-turn"].includes(reason) && openTurn &&
+      now - turn.startedAt >= threshold && waitedMs >= threshold;
+    return { code: stale ? "stale-turn" : reason, since, waitedMs, noticeIds: notices.map(notice => notice.id),
+      ...(openTurn && { turnId: turn.id, turnStartedAt: turn.startedAt }) };
+  }
+  updateDeliveryBlock(s, role, now = Date.now(), reason) {
+    const block = this.deliveryBlock(s, role, now, reason);
+    if (block) role.deliveryBlock = block;
+    else delete role.deliveryBlock;
+    return block;
+  }
+  messageDelivery(s, message, notice, now = Date.now()) {
+    const role = s.roles.find(item => item.id === message.to);
+    if (!notice || !role) return { state: "queued" };
+    const noticeId = notice.id;
+    if (notice.readAt) return { state: "read", noticeId, at: notice.readAt };
+    const wake = s.wakes.findLast(item => item.roleId === role.id && item.sessionId === role.sessionId &&
+      item.state === "enqueued" && activeWake(item) && (item.payloadNoticeIds ?? item.noticeIds).includes(noticeId));
+    if (wake) return { state: "handed-off", noticeId, at: wake.handedOffAt ?? wake.admittedAt };
+    const failed = s.wakes.some(wake => wake.roleId === role.id && wake.state === "failed" && !wake.consumedAt &&
+      wake.closeReason === "delivery-loss-limit" && wake.noticeIds.includes(noticeId)) &&
+      !s.wakes.some(wake => wake.roleId === role.id && activeWake(wake) && wake.noticeIds.includes(noticeId));
+    const reason = failed ? "delivery-loss-limit" : dispatchAvailability(role, now) ?? this.wakeBlockReason(s, role, now) ??
+      (notice.silent ? "manual-inbox" : null);
+    return reason ? { state: "blocked", reason, noticeId, since: notice.at } : { state: "queued", noticeId, since: notice.at };
+  }
   deliveryDiagnostic(s, role, since) {
     const wake = s.wakes.find(item => item.roleId === role.id && item.state === "pending");
     const failed = s.wakes.findLast(item => item.roleId === role.id && item.state === "failed" && !item.consumedAt && item.closeReason === "delivery-loss-limit");
@@ -873,8 +665,11 @@ export class Workflow {
         actions: ["rearmWake", "resumeTask", "inbox-from-original-session"], nextAction,
         detail: `投递异常，原唤醒已达重投上限。执行 rearmWake ${JSON.stringify(nextAction.args)} 或在原会话读取 inbox。` };
     }
+    const block = this.deliveryBlock(s, role);
     const availability = dispatchAvailability(role);
     const input = pendingInputStatus(role, wake);
+    if (block) return { ...block, reason: block.code, at: block.since, detail: `${deliveryLabels[block.code] ?? block.code}。 ${JSON.stringify(input)}`,
+      ...input, ...(wake && { wakeId: wake.id }) };
     const reason = ["bridge-tools-missing", "offline", "unbound", "disabled", "jobs-unknown"].includes(availability) ? availability :
       (role.state === "idle" ? input.blockReason : null) ?? wake?.diagnostic?.reason ??
       (role.pending > 0 ? "queued-input" : role.deliveryIssue?.startsWith("投递结果待对账") ? "uncertain" :
@@ -912,8 +707,12 @@ export class Workflow {
       roleIdentityDefaults: ROLE_IDENTITIES,
       notices: s.notices.slice(-100),
       wakes: s.wakes.slice(-100),
-      roles: s.roles.map((r) => ({
-        ...r,
+      roles: s.roles.map(r => {
+        const { deliveryBlock: storedBlock, ...role } = r;
+        const deliveryBlock = this.deliveryBlock(s, r, now);
+        return {
+        ...role,
+        ...(deliveryBlock && { deliveryBlock }),
         wakeHealth:wakeHealth(s,r.id),
         provider: providerOf(r),
         identityPrompt: savedPrompt(r.identityPrompt),
@@ -922,7 +721,8 @@ export class Workflow {
         ...pendingInputStatus(r),
         resumeStatus: this.resumeStatus(s, r),
         deliveryDiagnostic: r.enabled ? this.deliveryDiagnostic(s, r) : null,
-      })),
+        };
+      }),
     };
   }
   commandPolicy(sessionId, command, args, provider = "dsh") {
@@ -1106,8 +906,11 @@ export class Workflow {
     }
     if (command === "messages") {
       need(["controller", "supervisor"].includes(role?.kind) || teamMessageRole(role), "该角色没有独立频道");
+      const messageNotices = new Map(state.notices.filter(notice => notice.key.startsWith("message:"))
+        .map(notice => [notice.key.slice("message:".length), notice]));
       const channel = state.messages.filter(item => item.projectId === role.projectId &&
-        (item.from === role.id || item.to === role.id)).map(item => ({ ...item, kind: "message" }));
+        (item.from === role.id || item.to === role.id)).map(item => ({ ...item, kind: "message",
+          delivery: this.messageDelivery(state, item, messageNotices.get(item.id)) }));
       const notices = state.notices.filter(item => item.roleId === role.id).map(item => this.noticeMessage(state, item));
       if (args.messageId !== undefined) return find([...channel, ...notices], args.messageId);
       // Bound the sidebar history, while always retaining the role's unread inbox entries.
@@ -1156,14 +959,16 @@ export class Workflow {
         try {
           const sources = Object.fromEntries(["spec", "ticketsDir", "tickets", "attempts"]
             .filter(field => args[field] !== undefined).map(field => [field, args[field]]));
-          return freezePlan(state, role, { requirementId: args.requirementId, developerIds: args.developerIds, sources }, true, true);
+          return materializePlan(state, role, { requirementId: args.requirementId, developerIds: args.developerIds, sources },
+            member => dispatchAvailability(member) === null && !state.tasks.some(task => task.assignee === member.id && occupied(task)) &&
+              !state.checkJobs.some(job => job.requester === member.id && activeCheck(job)));
         } catch (error) {
           if (!error.violations) throw error;
           return { state: "invalid", violations: error.violations, warnings: error.warnings ?? [] };
         }
       }
       if (name === "resumeTask") return { ...signature, required: ["taskId", "reason"], states: ["assigned", "rework", "paused"],
-        preconditions: ["本项目主控", "成员不在运行，无排队输入或后台检查", "新心跳恢复后正常准入"], preserves: ["baseline", "candidate", "reports", "checkJobs", "reworkReason"] };
+        preconditions: ["本项目主控", "原票的后台检查已收口", "活动责任须确认成员静默，已暂停的开发票可先排队", "空闲心跳后正常准入"], preserves: ["baseline", "candidate", "reports", "checkJobs", "reworkReason"] };
       if (name === "interveneTask") return { ...signature, role: "controller", modes: ["guide", "stop"],
         preconditions: ["同项目在飞开发票且责任成员已绑定 DSH 会话"], effect: "运行中递交给下一执行步骤；stop 即时冻结新检查和成功交付" };
       if (name === "ackTaskIntervention") return { ...signature, role: "developer",
@@ -1180,10 +985,15 @@ export class Workflow {
         combined: "可与 refreshBaseline 一起使用，同时满足基线刷新状态和校验门槛" },
         redBaselineHead: { optional: true, requires: ["refreshBaseline:true", "expectedHead", "reason"],
           effect: "显式选定与现有实现一致的当前 Git HEAD 为取红快照，仍须取得真实断言失败" },
-        allowCheckRevision: { optional: true, effect: "停写后授权责任开发修订同一调度版本的冻结检查" },
+        allowCheckRevision: { optional: true, effect: "停写后向责任开发投递检查修订。授权绑定当前调度版本，须在 paused 状态登记。resumeTask 会撤销授权。" },
+        reviseLeadCheck: { args: { taskId: "<taskId>", reason: "核对原验收条款与探针误判的依据",
+          reviseLeadCheck: { checkId: "<checkId>", candidate: "<候选摘要>", expectedRecipe: "<诊断中的配方摘要>",
+            replacement: { argv: ["node", "-e", "<核对实际可观察结果的断言>"] } } },
+          replacementFields: leadCheckReplacementFields,
+          effect: "主控替换原票的一项短探针，保留编号、阶段和 AC 覆盖，旧探针回执留档并失效" },
         realignRedBaseline: { args: { taskId: "<taskId>", realignRedBaseline: true, expectedHead: "<当前 HEAD>",
           redBaselineHead: "<已核对的原分支提交>", reason: "核对未实现版本" },
-          effect: "仅续接取红快照，活动票和待验证票可在检查结束后执行，保留已有检查和交付" },
+          effect: "续接取红快照并保留已有回执。原开发票已暂停时，记录恢复调度并等原成员空闲后投递" },
         refreshSourceDigest: { states: ticketSourceReviewStates, requires: ["expectedSourceDigest", "reason"],
           effect: "确认诊断给出的当前票面摘要，保存对账记录，派发票面及原验收和检查仍冻结" } };
       if (name === "registerChecks") return { ...signature, role: "developer", optional: ["browserE2E", "resources", "replace", "reason"],
@@ -1194,9 +1004,9 @@ export class Workflow {
       return signature;
     }
     if (command === "previewPlan") {
-      try { return freezePlan(state, role, args, true); } catch(error) {
+      try { return previewPlan(state, role, args, tasks => this.parallelAssignmentWarnings(state, tasks)); } catch(error) {
         if (!error.violations) throw error;
-        return { state:"invalid", violations:error.violations, warnings:error.warnings ?? [] };
+        return { state:"invalid", verificationCode: error.verificationCode, violations:error.violations, warnings:error.warnings ?? [] };
       }
     }
     if (command === "diagnoseTask") {
@@ -1216,8 +1026,9 @@ export class Workflow {
       const recovery = this.recoveryPlan(state, task, diagnosis, lead);
       if (recovery.candidate || diagnosis.recovery)
         diagnosis.recovery = { ...diagnosis.recovery, ...recovery };
-      if (recovery.executable && diagnosis.nextAction && diagnosis.nextAction.ownerRole !== "developer" &&
-          diagnosis.nextAction.command !== "yieldForSchedule")
+      if (recovery.executable && diagnosis.nextAction?.ownerRole !== "developer" &&
+          diagnosis.nextAction?.command !== "yieldForSchedule" &&
+          (diagnosis.nextAction || diagnosis.reference?.returnToOwner))
         diagnosis.nextAction = recovery.candidate;
       else if (diagnosis.classification !== "scope-conflict" && ["inspect", "guide", "checkEvidence"].includes(diagnosis.nextAction?.command)) {
         diagnosis.reference = diagnosis.nextAction;
@@ -1304,9 +1115,11 @@ export class Workflow {
         s.controllerReads ??= {};
         delete s.controllerReads[current.id];
         const notices = s.notices.filter(
-          (n) => n.roleId === role.id && !n.readAt,
+          (n) => n.roleId === role.id && !n.readAt &&
+            (!n.key.startsWith("check-revision-requested:") || currentCheckRevisionNotice(s.tasks.find(task => task.id === n.taskId), n)),
         );
-        const resuming = notices.some((n) => n.key.startsWith("resume:") && !n.silent);
+        const resuming = current.sessionRecoveryPending || notices.some((n) => n.key.startsWith("resume:") && !n.silent);
+        delete current.sessionRecoveryPending;
         delete current.resumeWake;
         current.consecutiveWakeLosses = 0;
         delete current.pendingToolHealthCheck;
@@ -1314,13 +1127,22 @@ export class Workflow {
           n.readAt = Date.now();
           this.recordDelivery(s, n, role.id, n.readAt);
         }
+        this.updateDeliveryBlock(s, current);
         for (const wake of s.wakes)
           if (wake.roleId === role.id && !wake.consumedAt && (activeWake(wake) || wake.state === "failed"))
             consumeWake(wake,Date.now());
         const messageIds = new Set(notices.filter((n) => n.key.startsWith("message:")).map((n) => n.key.slice(8)));
+        const admissions = new Set();
         return {
           ...controllerBoundary,
-          notices,
+          notices: notices.filter(notice => {
+            const kind = admissionNoticeKind(notice.key);
+            if (!kind || !notice.taskId) return true;
+            const key = kind + ":" + notice.taskId;
+            if (admissions.has(key)) return false;
+            admissions.add(key);
+            return true;
+          }),
           ...(resuming && { recovery: this.recovery(s, current) }),
           ...(messageIds.size ? { messages: s.messages.filter((item) => item.to === role.id && messageIds.has(item.id)) } : {}),
           tasks: role.kind === "supervisor" ? [] : s.tasks.filter(
@@ -1400,6 +1222,23 @@ export class Workflow {
           result = { deleted: true };
           break;
         }
+        case "renameProject": {
+          ui();
+          const project = find(s.projects, args.projectId);
+          const name = text(args.name, "项目名称");
+          need(name.length <= 80, "项目名称不能超过 80 个字符");
+          if (project.name !== name) {
+            project.name = name;
+            // 项目名写进成员上下文与唤醒文本：递增上下文版本，已开启成员从 inbox 读取新名称。
+            for (const member of s.roles.filter((r) => r.projectId === project.id && !r.archivedAt)) {
+              member.contextRevision = contextRevision(member) + 1;
+              if (member.enabled)
+                this.notice(s, member.id, `context:${contextRevision(member)}`, "项目名称已更新，读取 inbox 应用。");
+            }
+          }
+          result = { id: project.id, name: project.name };
+          break;
+        }
         case "addRole": {
           ui();
           find(s.projects, args.projectId);
@@ -1466,8 +1305,9 @@ export class Workflow {
           s.messages.push(message);
           const label = planner ? "规划已交付：" : sender.kind === "supervisor" ? "监管者转达用户消息：" :
             target.kind === "supervisor" ? "主控已回复监管消息：" : lead ? "主控直达消息：" : "成员回复：";
-          this.notice(s, target.id, "message:" + message.id, label + message.id);
-          result = { state: "stored", messageId: message.id };
+          const storedNotice = this.notice(s, target.id, "message:" + message.id, label + message.id);
+          this.updateDeliveryBlock(s, target);
+          result = { state: "stored", messageId: message.id, delivery: this.messageDelivery(s, message, storedNotice) };
           break;
         }
         case "savePromptPreset": {
@@ -1574,28 +1414,15 @@ export class Workflow {
             "请先暂停该成员的新投递，并确认 DSH 会话已空闲",
           );
           need(
-            target.state !== "running" &&
+            target.state !== "running" && !turnBlocksDelivery(target.observation) && !target.inputDrop &&
               !(target.pending > 0) &&
               !(target.jobs > 0),
             "该成员的 DSH 会话仍有运行或待处理输入",
           );
-          need(
-            !s.tasks.some(
-              (t) =>
-                (t.state !== "accepted" &&
-                  (t.developerId === target.id || t.assignee === target.id)) ||
-                t.questions.some((q) => q.from === target.id && q.blocking === true && !q.answer),
-            ),
-            "该成员仍有未收口的任务或未答复问题",
-          );
           target.archivedAt = Date.now();
           target.archivedSessionId = target.sessionId;
           target.sessionId = null;
-          for (const notice of s.notices)
-            if (notice.roleId === target.id && !notice.readAt)
-              notice.readAt = Date.now();
-          for (const wake of s.wakes)
-            if (wake.roleId === target.id) consumeWake(wake,Date.now(),'role-archived');
+          this.retireRoleSession(s, target, target.archivedAt, "role-archived");
           result = { archived: true };
           break;
         }
@@ -1635,6 +1462,12 @@ export class Workflow {
           const request = find(s.requests, args.requestId),
             target = activeRole(s, request.roleId);
           need(providerOf(target) === "dsh", "会话类型不匹配");
+          need(!request.cancelledAt && (!request.confirmed || target.sessionId === request.sessionId),
+            "绑定申请已失效，请在要绑定的会话重新申请");
+          if (request.confirmed) {
+            result = { bound: true, started: target.enabled };
+            break;
+          }
           need(
             !target.sessionId || target.sessionId === request.sessionId,
             "角色已绑定其他会话",
@@ -1649,6 +1482,29 @@ export class Workflow {
           target.enabled = false;
           request.confirmed = true;
           result = { bound: true, started: false };
+          break;
+        }
+        case "unbindRole": {
+          ui();
+          const target = activeRole(s, args.roleId);
+          need(target.sessionId && target.sessionId === args.expectedSessionId, "当前会话绑定已变化，请刷新成员卡后再操作");
+          need(target.state !== "running" && !turnBlocksDelivery(target.observation) &&
+            !(target.pending > 0) && !(target.jobs > 0) && !target.inputDrop,
+            "原会话仍有运行回合、排队输入或后台作业，请在原会话处理完再解绑");
+          const now = Date.now();
+          this.retireRoleSession(s, target, now, "role-unbound");
+          if (s.controllerReads) delete s.controllerReads[target.id];
+          for (const field of [
+            "observation", "pending", "jobs", "pendingInputKinds", "pendingInputFingerprint", "pendingInputIds",
+            "queuedInputApproval", "queueIdle", "queueDrainWakeId", "canDropPendingInput", "deliveryBlock", "deliveryIssue",
+            "resumeWake", "seenContextRevision", "seenSupervisionPolicy", "lastInboxAt", "ownerIdleSince",
+            "patrolStatus", "patrolEpisode", "toolsVersion", "toolsMissing", "lastToolsRepairId", "toolHealthSupported",
+            "pendingToolHealthCheck", "consecutiveWakeLosses", "lastReportedStaleTurn",
+          ]) delete target[field];
+          Object.assign(target, { sessionId: null, enabled: false, connectedAt: 0, bridgePresent: false, state: "offline",
+            sessionRecoveryPending: true, inboxGeneration: (target.inboxGeneration ?? 0) + 1 });
+          this.store.event("role.session-unbound", { roleId: target.id, sessionId: args.expectedSessionId, provider: providerOf(target) });
+          result = { roleId: target.id, sessionId: null, enabled: false };
           break;
         }
         case "enable": {
@@ -1668,7 +1524,9 @@ export class Workflow {
               if (notice.roleId === target.id && !notice.readAt && /^(resume|patrol-resume):/.test(notice.key))
                 notice.readAt = target.enabledAt;
             delete target.patrolEpisode;
-            const silent = !roleHasOpenResponsibility(target, s);
+            const recoveringProject = target.sessionRecoveryPending && target.kind === "controller" &&
+              this.recovery(s, target).tasks.length > 0;
+            const silent = !recoveringProject && !roleHasOpenResponsibility(target, s);
             this.notice(
               s,
               target.id,
@@ -1687,21 +1545,30 @@ export class Workflow {
           break;
         }
         case "dispatchPlan":
-          result = freezePlan(s, currentRole, args);
+          result = dispatchPlan(s, currentRole, args);
           break;
         case "rearmWake": {
           const target = activeRole(s, args.roleId);
           need(!currentRole || isController(currentRole, target), "仅工作台或本项目主控可续接失效唤醒");
           const reason = text(args.reason, "续接依据");
           const now = Date.now();
-          const blocker = dispatchAvailability(target, now, true);
+          // Tool execution can precede the first heartbeat of the new DSH turn.
+          if (currentRole?.id === target.id && isDshController(target) &&
+              (source === "dsh-adapter" || turnBlocksDelivery(target.observation))) {
+            target.pendingWakeRearm = { sessionId, operationId, reason, requestedAt: now };
+            result = { state: "queued", roleId: target.id, executeAfter: "turn-end" };
+            break;
+          }
+          const blocker = dispatchAvailability(target, now, true) ?? this.wakeBlockReason(s, target, now);
           if (blocker || target.jobs !== 0 || target.pendingToolHealthCheck) {
             const code = blocker ?? "bridge-health-check";
-            return { state: "blocked", roleId: target.id, blockedBy: [{code}],
-              nextAction: { command:"list",args:{} }, detail: "执行 list 核对角色连接、队列和工具健康" };
+            const block = this.updateDeliveryBlock(s, target, now);
+            return { state: "blocked", roleId: target.id, blockedBy: [{ code, detail: deliveryLabels[block?.code ?? code] }],
+              since: block?.since ?? null, waitedMs: block?.waitedMs ?? 0, blockedNoticeIds: block?.noticeIds ?? [],
+              nextAction: { command: "inbox", args: {}, ownerRole: target.kind, ownerId: target.id },
+              detail: "由原绑定会话读取 inbox。若原会话当前无法执行工具，普通消息将在回合结束后投递。停写应使用原票的 interveneTask。" };
           }
-          const rearmed = rearmLostWake(s, target, now, (kind, data) => this.store.event(kind, data),
-            (role, unread) => selectWakeNotices(s, role, unread, { ignoreFailed: true }).notices, { reason, manual: true });
+          const rearmed = this.rearmWake(s, target, now, reason);
           result = rearmed ? { state: "pending", ...rearmed } : { state: "no-failed-wake", roleId: target.id,
             nextAction: { command:"list",args:{} } };
           break;
@@ -1748,18 +1615,9 @@ export class Workflow {
             nextAction: { command: "list", args: {} } };
           break;
         }
-        case "dispatch": {
-          const requirement = find(s.requirements, args.requirementId);
-          need(currentRole?.kind === "controller" && currentRole.projectId === requirement.projectId, "请在本项目已开启的 DSH 主控会话派单");
-          verify(args.readOnly === true, "contract-invalid", "新实施票请用 dispatchPlan 并提供 tickets[].verification；纯调查才用 dispatch，例如 {\"readOnly\":true,\"writes\":[]}");
-          const task = newTask(s, currentRole, requirement, args, id());
-          task.dependencies = list(args.dependencies ?? [], "依赖");
-          for (const dependency of task.dependencies)
-            need(find(s.tasks, dependency).projectId === task.projectId, "依赖必须同项目");
-          s.tasks.push(task);
-          result = { taskId: task.id, receipt: "accepted" };
+        case "dispatch":
+          result = dispatchReadOnlyTask(s, currentRole, args);
           break;
-        }
         case "unblock": {
           const task = find(s.tasks, args.taskId);
           need(isController(currentRole, task), "仅本项目主控可 unblock");
@@ -1804,7 +1662,7 @@ export class Workflow {
         case "supersede": {
           const task = find(s.tasks, args.taskId);
           need(currentRole?.kind === "controller" && currentRole.projectId === task.projectId, "仅本项目主控可替代原票");
-          assertStoppedTask(s, task, { allowTrial: true });
+          assertStoppedTask(s, task, { allowTrial: true, allowDelivered: true });
           const successor = find(s.tasks, args.supersededBy);
           const git = this.scopeReleaseGit(s, task);
           const audit = { reason: text(args.reason, "替代原因"), by: currentRole.id, at: Date.now(), head: git.head };
@@ -1812,6 +1670,8 @@ export class Workflow {
           this.recordContract(s, task, false);
           Object.assign(result,releaseHandoff(s,task,git));
           this.retire(s, task.id);
+          if (task.supersession.stopProof) this.store.event("supersede-task", { taskId: task.id, supersededBy: successor.id,
+            ...audit, stopProof: task.supersession.stopProof });
           this.notice(s, task.developerId, "superseded:" + task.id, "原票已被替代，停止原票工作并保留证据：" + task.title, task.id);
           break;
         }
@@ -1823,7 +1683,7 @@ export class Workflow {
           result=abandonStoppedTask(s,task,git,audit);
           this.recordContract(s, task, false);
           Object.assign(result,releaseHandoff(s,task,git));
-          this.retire(s,task.id);this.store.event('abandon-task',{taskId:task.id,...audit});
+          this.retire(s,task.id);this.store.event('abandon-task',{taskId:task.id,...task.abandonment});
           break;
         }
         case "recordSourceAppend": {
@@ -1879,8 +1739,7 @@ export class Workflow {
           need(currentRole?.kind === "controller" && currentRole.projectId === task.projectId, "仅本项目主控可调整前置");
           need(task.state === "queued" && !releasedTaskScope(task), "insertSchedule 仅允许未释放的 queued 票");
           need(Object.keys(args).every(key => ["taskId", "after", "reason"].includes(key)), "insertSchedule 只调整前置依赖");
-          const next = resolveAfter(s.tasks, task, args.after);
-          validateDependencyEdit(s, task, next);
+          const next = prepareDependencyEdit(s, task, args.after);
           const previous = { dependencies: task.dependencies, stages: task.dependencyStages, writes: [...task.writes] };
           const reason = text(args.reason, "调整原因");
           retainDependencyReceipts(task, next);
@@ -1898,6 +1757,8 @@ export class Workflow {
         }
         case "yieldForSchedule": {
           const task = find(s.tasks, args.taskId);
+          if (currentRole && currentRole.id === task.assignee && task.state === "paused")
+            return { state: "paused", taskId: task.id, noop: true };
           need(currentRole?.id === task.assignee && ["assigned", "rework"].includes(task.state), "只有已停写的责任成员可以交回调度");
           const request = activeTaskIntervention(task);
           if (request?.mode === "stop") {
@@ -1917,7 +1778,7 @@ export class Workflow {
           lead(task.projectId);
           need(currentRole?.kind === "controller", "仅本项目主控可确认提交归属");
           verify(!releasedTaskScope(task),'contract-invalid',releasedConfirmationMessage);
-          need(task.state === "paused" && !task.candidate, '重绑顺序：1. diagnoseTask {taskId} 获取 nextAction；2. 已交付票由主控 rework {taskId,adjustScope:true,reason} 暂停，活动票由开发停写后 yieldForSchedule {taskId,reason}；3. 再 diagnoseTask，复制 nextAction.args 调 rebindCommittedWork。');
+          need(["paused", "queued"].includes(task.state) && !task.candidate, '重绑顺序：1. diagnoseTask {taskId} 获取 nextAction；2. 已交付票由主控 rework {taskId,adjustScope:true,reason} 暂停，活动票由开发停写后 yieldForSchedule {taskId,reason}；3. 再 diagnoseTask，复制 nextAction.args 调 rebindCommittedWork。');
           const reason = text(args.reason, "主控确认提交归属的理由");
           need(reason !== "填写核对提交差异和归属的实际依据", "请填写主控核对提交差异和归属的实际依据");
           const root = find(s.projects, task.projectId).root;
@@ -1927,7 +1788,24 @@ export class Workflow {
           const sourceNotes = planningSourceNotes(root, task, plan);
           assertFrozenTicket(root, task, git);
           const records = recordedBaselineChanges(root, task, plan, git, drift);
-          const overlap = this.committedRebindScope(s, task, root, git, drift, records);
+          const { paths: overlap, checkInputDrift, pruned, dirtyWrites, promotedReads } = this.committedRebindScope(s, task, root, git, drift, records, { allowDirtyWrites: true, allowPromotedReads: true });
+          const dirtyWritePaths = Object.keys(dirtyWrites);
+          if (dirtyWritePaths.length && args.confirmOwnedDirty === undefined)
+            verify(false, "contract-invalid", "冻结路径工作树仍有残留：" + summarizePaths(dirtyWritePaths) + "；请用 diagnoseTask 核对原票并在确认归属后传入 confirmOwnedDirty");
+          verify(exactConfirmations(args.confirmOwnedDirty, dirtyWrites), "contract-invalid",
+            dirtyWritePaths.length
+              ? '请按 diagnoseTask 精确确认写集内工作树改动；confirmOwnedDirty 必须是对象 {"写集相对路径":"<sha256>"}，文件变化须重新 diagnoseTask。'
+              : "工作树写集干净，未要求确认时请省略 confirmOwnedDirty。");
+          if (promotedReads.length && args.confirmReadPromotion === undefined)
+            verify(false, "contract-invalid", "写集包含准入时列为只读输入后扩入的路径：" + summarizePaths(promotedReads) + "；请用 diagnoseTask 核对原票并在确认归属后传入 confirmReadPromotion");
+          if (promotedReads.length || args.confirmReadPromotion !== undefined)
+            verify(
+              Array.isArray(args.confirmReadPromotion) &&
+              JSON.stringify(scopePaths(args.confirmReadPromotion)) === JSON.stringify(scopePaths(promotedReads)),
+              "contract-invalid",
+              promotedReads.length
+                ? "confirmReadPromotion 必须精确对应诊断的读转写扩围路径；请重新用 diagnoseTask 核对"
+                : "没有需要确认的读转写扩围路径，请省略 confirmReadPromotion");
           const expectedRecords = Object.fromEntries(records.map(({ file, toDigest }) => [file, toDigest]));
           verify(exactConfirmations(args.confirmRecordedBaseline, expectedRecords), "contract-invalid",
             '请按 diagnoseTask 确认已入库规划记录；confirmRecordedBaseline 必须是对象 {"规划相对路径":"<sha256>"}，不是布尔值；从 diagnoseTask.nextAction.args 复制实际路径与指纹，未要求确认时省略该字段。');
@@ -1936,22 +1814,27 @@ export class Workflow {
           verify(
             JSON.stringify(scopePaths(args.confirmPaths)) === JSON.stringify(scopePaths(overlap)),
             "contract-invalid", "基线或重叠文件与确认不一致；请重新用 diagnoseTask 核对");
-          const previous = { writes: [...task.writes], baseline: structuredClone(task.baseline) };
+          const previous = { writes: [...task.writes], ownedDirty: [...(task.ownedDirty ?? [])], baseline: structuredClone(task.baseline) };
+          const nextOwnedDirty = scopePaths([...(task.ownedDirty ?? []), ...dirtyWritePaths]);
           const rerunRed = drift.conflicts.length ? task.verification.checks
-            .filter(check => check.stage === "red" && !this.validCheck(s, task, check)).map(check => check.id) : [];
+            .filter(check => check.stage === "red" && !validCheck(s, task, check)).map(check => check.id) : [];
           const redBaseline = task.redBaseline ?? { head: task.baseline.sourcesHead ?? task.baseline.head, sources: task.baseline.sources, sourceFiles: task.baseline.sourceFiles };
           const committedRed = implementationSnapshotAtCommit(root, task, git.head);
           const redBaselineRebound = Boolean(committedRed && committedRed.sources === redBaseline.sources);
           const deliveryBase = task.baseline.deliveryBase ?? task.baseline.head;
-          const baseline = { ...scopeBaseline(root, task, this.foreignWrites(s, task), git), deliveryBase };
+          const baseline = { ...scopeBaseline(root, { ...task, ownedDirty: nextOwnedDirty }, this.foreignWrites(s, task), git), deliveryBase };
           const current = this.ownershipGit(s, task);
           verify(current.head === git.head && current.branch === git.branch && current.index === git.index &&
             JSON.stringify(current.dirty) === JSON.stringify(git.dirty), "contract-invalid", "核对期间 Git 状态已变化，请重新运行 diagnoseTask");
+          for (const [file, digest] of Object.entries(dirtyWrites))
+            verify(worktreeDirtyDigest(root, file) === digest, "contract-invalid", "核对期间写集文件内容已变化，请重新运行 diagnoseTask：" + file);
           assertFrozenTicket(root, task, current);
           verify(JSON.stringify(recordedBaselineChanges(root, task, plan, current, drift)) === JSON.stringify(records),
             "contract-invalid", "核对期间规划来源已变化，请重新运行 diagnoseTask");
           task.baseline = baseline;
-          this.auditOutsidePrune(task, drift, committedOutsideBaseline(root, { ...task, baseline: previous.baseline }, drift, git));
+          task.ownedDirty = nextOwnedDirty;
+          delete task.preflightFailure;
+          this.auditOutsidePrune(task, drift, pruned);
           this.recordContract(s, task, false);
           delete task.pausedFrom;
           task.candidate = null;
@@ -1961,8 +1844,10 @@ export class Workflow {
           task.redBaseline = redBaselineRebound ? { head: git.head, writes: [...task.writes], ...committedRed } : redBaseline;
           if (rerunRed.length) {
             task.revision++;
-            this.invalidateCheckReceipts(s, task, rerunRed);
+            invalidateCheckReceipts(s, task, rerunRed);
           }
+          if (checkInputDrift.length)
+            invalidateCheckReceipts(s, task, task.verification.checks.filter(check => check.stage !== "red").map(check => check.id));
           task.retainedWrites = [];
           task.state = "queued";
           task.waitReason = null;
@@ -1971,6 +1856,9 @@ export class Workflow {
           const rebind = { from: drift.from, to: drift.to, overlap, reason, at: Date.now(), by: currentRole.id,
             redBaselineRebound, redBaselineHead: task.redBaseline.head,
             redBaselineReason: redBaselineRebound ? "当前提交与原取红实现等价，红基线已重绑" : "红基线保留原取证版本。可用 reviseSchedule {refreshBaseline:true,expectedHead,redBaselineHead,reason} 指定已核对历史提交",
+            ...(dirtyWritePaths.length && { confirmedOwnedDirty: dirtyWritePaths }),
+            ...(promotedReads.length && { confirmedReadPromotion: promotedReads }),
+            ...(checkInputDrift.length && { checkInputDrift }),
             ...(sourceNotes.length && { sourceNotes }),
             ...(records.length && { recordedBaseline: records }),
             ...(rerunRed.length && { rerunRed,
@@ -1987,8 +1875,12 @@ export class Workflow {
         case "reviseSchedule": {
           const task = find(s.tasks, args.taskId);
           need(currentRole?.kind === "controller" && currentRole.projectId === task.projectId, "仅本项目 DSH 主控可调整调度");
-          if (command === "confirmForeignDirty" || args.confirmForeignDirty !== undefined) {
-            need(Object.keys(args).every(key => ["taskId", "reason", "confirmForeignDirty", "expectedHead"].includes(key)),
+          if (command === "reviseSchedule" && args.reviseLeadCheck !== undefined) {
+            result = this.reviseLeadCheck(s, task, args, currentRole);
+            break;
+          }
+          if (command === "confirmForeignDirty" || ["confirmForeignDirty", "confirmByOwnership", "byTask"].some(field => args[field] !== undefined)) {
+            need(Object.keys(args).every(key => ["taskId", "reason", "confirmForeignDirty", "confirmByOwnership", "byTask", "expectedHead"].includes(key)),
               "确认票外归属须单独执行");
             result = this.confirmForeignDirty(s, task, args, currentRole);
             break;
@@ -2013,17 +1905,26 @@ export class Workflow {
               "仅可授权已准入、停写且责任未转移的原票。先用 diagnoseTask 核对原票阶段");
             assertStoppedTask(s, task);
             const reason = text(args.reason, "修订检查的授权依据");
-            task.checkRevisionApproval = { reason, by: currentRole.id, at: Date.now(), scheduleVersion: task.scheduleVersion ?? 0 };
-            let nextAction;
+            const approval = { id: id(), reason, by: currentRole.id, at: Date.now(), scheduleVersion: task.scheduleVersion ?? 0 };
+            const registration = { taskId: task.id, replace: true };
+            let nextAction = { command: "registerChecks", args: registration, ownerRole: "developer",
+              ownerId: task.developerId, requiredParameters: ["reason", "checks"] };
             if (args.preparationJobId !== undefined) {
               const job = s.checkJobs.find(item => item.id === args.preparationJobId);
               const proposal = verify(preparationRevision(s, task, job), "contract-invalid",
                 "该构建超时记录已变化或缺少同配方历史。执行 diagnoseTask 核对原票");
-              task.checkRevisionApproval.preparationJobId = job.id;
+              approval.preparationJobId = job.id;
               nextAction = proposal.registration;
             }
-            this.store.event("checks.revision-approved", { taskId: task.id, ...task.checkRevisionApproval });
-            result = { state: "stored", taskId: task.id, checkRevisionApproval: task.checkRevisionApproval, ...(nextAction && { nextAction }) };
+            for (const notice of s.notices)
+              if (notice.taskId === task.id && notice.key.startsWith("check-revision-requested:")) notice.readAt ??= approval.at;
+            task.checkRevisionApproval = approval;
+            const notice = this.notice(s, task.developerId, `check-revision-requested:${task.id}:${approval.id}`,
+              `版本 ${approval.scheduleVersion} 已授权。请在 paused 状态执行 registerChecks ${JSON.stringify(registration)}，补齐 reason 和全套开发 checks。` +
+                (approval.preparationJobId ? "先用 diagnoseTask 核对批准的预算参数。" : "") +
+                "登记前不要执行 resumeTask，该命令会撤销授权。", task.id);
+            this.store.event("checks.revision-approved", { taskId: task.id, ...approval, noticeId: notice.id });
+            result = { state: "stored", taskId: task.id, checkRevisionApproval: approval, noticeId: notice.id, nextAction };
             break;
           }
           need(args.redBaselineHead === undefined || args.refreshBaseline === true && args.expectedHead !== undefined,
@@ -2138,9 +2039,8 @@ export class Workflow {
           const nextResources = args.resources === undefined ? task.resources : [...new Set(list(args.resources, "共享资源").map((r) => text(r, "资源").toLowerCase()))];
           const previous = { reads: task.reads, contextReads: task.contextReads ?? [], writes: [...task.writes], resources: task.resources, dependencies: task.dependencies, stages: task.dependencyStages, ownedDirty: task.ownedDirty };
           const next = args.after === undefined ? { dependencies: task.dependencies, dependencyStages: task.dependencyStages } :
-            resolveAfter(s.tasks, task, args.after);
+            prepareDependencyEdit(s, task, args.after);
           const { dependencies: nextDependencies, dependencyStages: nextStages } = next;
-          if (args.after !== undefined) validateDependencyEdit(s, task, next);
           if (task.batchId) {
             const batch = find(s.validationBatches, task.batchId);
             const peers = batch.taskIds.filter((id) => id !== task.id).map((id) => find(s.tasks, id));
@@ -2218,10 +2118,30 @@ export class Workflow {
                       !job.invalidated && checkIds.includes(job.check.id))
                     invalidatedChecks.push({ checkId: job.check.id, jobId: job.id,
                       reason: job.check.stage === "red" ? "写集变化导致红基线内容变化" : "调度范围变化，须按新范围核对检查" });
-                  this.invalidateCheckReceipts(s, task, checkIds);
+                  invalidateCheckReceipts(s, task, checkIds);
                 }
               }
-              if (!recovered) task.baseline.other = task.baseline.other.filter(([file]) => !expanded.includes(file));
+              if (!recovered) task.baseline.other = task.baseline.other.filter(([file]) => !coversPath(nextWrites, file));
+              if (!args.refreshBaseline && !sameWrites) {
+                task.baseline.admissionWrites ??= [...task.writes];
+                if (addedWrites.length && task.writes.every(file => coversPath(nextWrites, file))) {
+                  const sameHead = git.head === task.baseline.head;
+                  const priorReads = [
+                    ...frozenReadsFor(task),
+                    ...(task.scheduleHistory ?? [])
+                      .filter(({ previous }) => previous?.reads && (!previous.baseline || previous.baseline.head === task.baseline.head))
+                      .flatMap(({ previous }) => previous.reads),
+                  ];
+                  const committed = sameHead ? [] : (baselineDrift(root, task, git, addedWrites)?.conflicts ?? []);
+                  const laundered = sameHead ? [] : addedWrites.filter(file =>
+                    overlaps([file], committed) && overlaps([file], priorReads));
+                  const authorized = addedWrites.filter(file => !laundered.includes(file));
+                  if (laundered.length)
+                    task.baseline.postDriftReadPromotions = scopePaths([...(task.baseline.postDriftReadPromotions ?? []), ...laundered]);
+                  if (authorized.length)
+                    task.baseline.widenedWrites = scopePaths([...(task.baseline.widenedWrites ?? []), ...authorized]);
+                }
+              }
               if (args.refreshBaseline === true) {
                 const drift = baselineDrift(root, task, git, [...task.writes, ...nextWrites, ...readsFor(task), ...nextReads]);
                 if (args.expectedHead !== undefined) assertCommitReference(args.expectedHead, git.head, "expectedHead");
@@ -2236,7 +2156,7 @@ export class Workflow {
                 const { sources, sourceFiles, sourcesHead, deliveryBase } = task.baseline;
                 const sameScope = JSON.stringify([task.writes, task.reads, task.dependencies, task.dependencyStages, task.resources]) ===
                   JSON.stringify([nextWrites, nextReads, nextDependencies, nextStages, nextResources]);
-                const evidenceBase = sameScope && !modeChanged ? this.evidenceBase(task) : null;
+                const preservedEvidenceBase = sameScope && !modeChanged ? evidenceBase(task) : null;
                 if (modeChanged) {
                   const reference = task.redBaseline ?? task.baseline;
                   verify(sameWrites &&
@@ -2244,7 +2164,7 @@ export class Workflow {
                     "切换指纹口径前须恢复原取红实现内容并保持冻结写集；不能从已推进的实现静默重算。");
                   if (task.redBaseline) Object.assign(task.redBaseline, implementationFingerprint(root, task));
                   task.revision++;
-                  this.invalidateCheckReceipts(s, task, task.verification.checks.map(check => check.id));
+                  invalidateCheckReceipts(s, task, task.verification.checks.map(check => check.id));
                 }
                 const refreshed = scopeBaseline(root, { ...task, writes: nextWrites, ownedDirty: nextOwnedDirty }, this.foreignWrites(s, task), git);
                 const redBaseline = task.redBaseline ?? previousBaseline;
@@ -2257,7 +2177,7 @@ export class Workflow {
                   task.redBaseline = { head: previousBaseline.head, ...proof };
                   if (sourceChanged) {
                     task.revision++;
-                    this.invalidateCheckReceipts(s, task, task.verification.checks.map(check => check.id));
+                    invalidateCheckReceipts(s, task, task.verification.checks.map(check => check.id));
                   }
                   redBaselineResult = { redBaselineRealigned: true, previousSources: sources !== proof.sources ? sources : redBaseline.sources,
                     newSources: proof.sources, rerunRed,
@@ -2270,7 +2190,7 @@ export class Workflow {
                   ...refreshed,
                   ...(!modeChanged && !realigned && { sources, sourceFiles, ...(sourcesHead && { sourcesHead }) }),
                   ...(deliveryBase && { deliveryBase }),
-                  ...(evidenceBase && !sourceChanged && { evidenceBase }),
+                  ...(preservedEvidenceBase && !sourceChanged && { evidenceBase: preservedEvidenceBase }),
                 };
                 this.recordContract(s, task, false);
                 if (drift) rebind = { from: drift.from, to: drift.to, committedBetween: drift.committedBetween };
@@ -2285,10 +2205,12 @@ export class Workflow {
               verify(fileSha256(root, file) === sha256, "contract-invalid", "核对期间文件 SHA-256 已变，须重新提报：" + file);
           }
           if (args.after !== undefined) retainDependencyReceipts(task, next);
-          if (recovered) {
+          const resumed = task.state === "paused";
+          const now = Date.now();
+          if (recovered || resumed)
             Object.assign(previous, { state: task.state, deliveredAt: task.deliveredAt });
-            find(s.roles, task.developerId).resumeTaskAfter = Date.now();
-          }
+          if (recovered || resumed && !ownerStatus(s, task, now).silent)
+            find(s.roles, task.developerId).resumeTaskAfter = now;
           Object.assign(task, {
             reads: nextReads, contextReads: nextContextReads, writes: nextWrites, resources: nextResources, ownedDirty: nextOwnedDirty,
             ...(task.readOnly && (args.reads !== undefined || nextContextReads.length > 0) && { readScopeKnown: true }),
@@ -2297,7 +2219,8 @@ export class Workflow {
             ...(task.pausedFrom && { candidate: null, controllerEvidence: null, reportedAt: null, pausedFrom: null, resumeState: "rework" }),
             scheduleVersion: (task.scheduleVersion ?? 0) + 1,
           });
-          (task.scheduleHistory ??= []).push({ previous, reason, by: currentRole.id, at: Date.now(), ...recovered, ...(rebind && { rebind }) });
+          (task.scheduleHistory ??= []).push({ previous, reason, by: currentRole.id, at: now, ...recovered,
+            ...(resumed && { resumed }), ...(rebind && { rebind }) });
           if (!widening) this.retire(s, task.id);
           if (pureWiden) {
             this.store.event("schedule.writes-widened", { taskId: task.id, added: addedWrites, by: currentRole.id, reason, scheduleVersion: task.scheduleVersion,
@@ -2310,7 +2233,7 @@ export class Workflow {
             ...(invalidatedChecks.length && { invalidatedChecks }),
             ...(args.pruneOutside === true && { prunedOutside: prunedOutside ?? [],
               ...(!prunedOutside?.length && { pruneOutsideReason: "没有可证明已收口、可从票外基线移除的文件" }) }),
-            ...recovered, ...(rebind && { rebind }), ...redBaselineResult };
+            ...recovered, ...(resumed && { resumed }), ...(rebind && { rebind }), ...redBaselineResult };
           break;
         }
         case "registerChecks": {
@@ -2318,12 +2241,18 @@ export class Workflow {
           const replacing = args.replace === true;
           const initial = Boolean(task.developerChecksPending);
           const approval = task.checkRevisionApproval;
-          need(currentRole?.kind === "developer" && currentRole.id === task.developerId &&
-            currentRole.id === task.assignee && (replacing ? task.state === "paused" : ["assigned", "rework"].includes(task.state)),
-          "仅原票责任开发可登记或修订检查");
+          need(currentRole?.kind === "developer" && currentRole.projectId === task.projectId &&
+            currentRole.id === task.developerId && currentRole.id === task.assignee, "仅原票责任开发可登记或修订检查");
+          verify(replacing ? approval : task.developerChecksPending, "contract-invalid",
+            "该票的检查已冻结或未选择开发登记模式；修订须先停写并由主控明确授权");
+          if (replacing) {
+            const version = task.scheduleVersion ?? 0;
+            verify(!approval.revokedAt && approval.scheduleVersion === version, "contract-invalid",
+              `检查修订授权已过期（授权版本 ${approval.scheduleVersion}，当前版本 ${version}）。请主控在 paused 态重新授权，resumeTask 会撤销授权。`);
+          }
           verify(task.baseline && task.verification && !releasedTaskScope(task) && (replacing
-            ? approval?.scheduleVersion === (task.scheduleVersion ?? 0) && !task.candidate
-            : task.developerChecksPending), "contract-invalid", "该票的检查已冻结或未选择开发登记模式；修订须先停写并由主控明确授权");
+            ? task.state === "paused" && !task.candidate : ["assigned", "rework"].includes(task.state)), "contract-invalid",
+          replacing ? "检查修订须在原票停写的 paused 状态登记" : "初次登记须在原票准入后执行");
           need(Object.keys(args).every(key => ["taskId", "checks", "browserE2E", "resources", "replace", "reason"].includes(key)),
             "只能登记检查、浏览器用例和已批准的共享资源");
           if (replacing) need(!s.checkJobs.some(job => jobIncludes(job, task.id) && activeCheck(job)), "修订前先收口所有在途检查");
@@ -2332,12 +2261,13 @@ export class Workflow {
             break;
           }
           const checks = list(args.checks, "开发检查", 20);
-          verify(checks.every(check => check && !leadCheck(check)), "contract-invalid", "主控探针只能由主控在派发时冻结");
+          verify(checks.every(check => check && !leadCheck(check)), "contract-invalid", "主控探针由主控冻结和修订，请沿原票交主控处理");
           const resources = list(args.resources ?? [], "检查共享资源").map(resource => text(resource, "资源名称").toLowerCase());
           const undeclared = resources.filter(resource => !task.resources.includes(resource));
           verify(!undeclared.length, "contract-invalid", "检查资源尚未获批：" + undeclared.join("、") + "；请停写后由主控调整原票");
           const root = find(s.projects, task.projectId).root;
-          const git = this.verifyScope(s, task, currentRole, true);
+          const { git, requiresRebind } = replacing ? this.checkRevisionScope(s, task, currentRole, root) :
+            { git: this.verifyScope(s, task, currentRole, true) };
           const frozen = task.verification;
           const warnings = [];
           const probes = frozen.checks.filter(leadCheck).map(check => {
@@ -2348,6 +2278,14 @@ export class Workflow {
             ...list(args.browserE2E ?? [], "浏览器用例", 20)];
           const verification = readVerification({ ...frozen, browserE2E, checks: [...probes, ...checks] },
             { root, writes: task.writes, risk: task.risk, warnings });
+          const redPairs = verification.checks.filter(check => check.stage === "red");
+          const lostRed = frozen.checks.find(check => check.stage === "red" &&
+            !redPairs.some(replacement => check.covers.every(ac => replacement.covers.includes(ac)) &&
+              (check.redMode !== "auto-revert" || replacement.redMode === "auto-revert")));
+          verify(!lostRed, "contract-invalid",
+            "修订不能移除原取红覆盖或隔离模式：" + lostRed?.id + "。保留配对红绿及已有 redMode: auto-revert。");
+          if (task.riskItems?.some(item => item.verifiedBy.length))
+            freezeRiskItems(task, verification, warnings, "ticket");
           const previousChecks = new Map(frozen.checks.map(check => [check.id, check]));
           const replacements = new Map(verification.checks.map(check => [check.id, check]));
           const sameRecipe = (left, right) => right && left.stage === right.stage && sameCheckRecipe(left, right);
@@ -2365,17 +2303,20 @@ export class Workflow {
           const approvedResources = new Set([...task.resources, ...frozen.checks.flatMap(check => check.resources ?? [])]);
           verify(verification.checks.every(check => (check.resources ?? []).every(resource => approvedResources.has(resource))),
             "contract-invalid", "修订检查只能使用已批准的共享资源");
-          const unapproved = scopePaths(verification.checks.filter(check => !leadCheck(check))
-            .flatMap(check => [...check.inputs, ...(check.requiredArtifacts ?? [])]))
-            .filter(file => !coversPath([...task.writes, ...task.reads], file));
+          const approvedPaths = [...task.writes, ...task.reads];
+          const unapproved = scopePaths(verification.checks.filter(check => !leadCheck(check)).flatMap(check => {
+            const previous = replacing ? previousChecks.get(check.id) : undefined;
+            return ["inputs", "requiredArtifacts"].flatMap(field => (check[field] ?? []).filter(file =>
+              !coversPath(approvedPaths, file) && !previous?.[field]?.includes(file)));
+          }));
           verify(!unapproved.length, "contract-invalid", "检查输入或产物超出已批准读写范围：" + unapproved.join("、") + "；请停写后由主控调整原票");
           assertTicketContract({ ...task, verification, developerChecksPending: false });
           if (replacing) {
-            const audit = { previous: { writes: [...task.writes], verification: frozen }, approval,
+            const audit = { previous: { writes: [...task.writes], verification: frozen }, approval: { ...approval, consumedAt: Date.now() },
               invalidatedChecks: invalidatedChecks.map(check => check.id),
               reason: text(args.reason, "检查修订依据"), at: Date.now(), by: currentRole.id };
             (task.scheduleHistory ??= []).push(audit);
-            this.invalidateCheckReceipts(s, task, audit.invalidatedChecks);
+            invalidateCheckReceipts(s, task, audit.invalidatedChecks);
             task.revision++;
             task.scheduleVersion = (task.scheduleVersion ?? 0) + 1;
             delete task.checkRevisionApproval;
@@ -2387,7 +2328,7 @@ export class Workflow {
           task.checksRegisteredAt = Date.now();
           const checkIds = verification.checks.filter(check => !leadCheck(check)).map(check => check.id);
           const nextAction = task.state === "paused"
-            ? { command: "reviseSchedule", args: { taskId: task.id, reason: "检查修订已登记，沿原票恢复调度" } }
+            ? this.revisedChecksNextAction(s, task, git, requiresRebind, "检查修订已登记，沿原票恢复调度")
             : { command: "check", args: { taskId: task.id, checkId: verification.checks.find(check => check.stage === "red").id } };
           this.store.event("checks.registered", { taskId: task.id, by: currentRole.id, checkIds, at: task.checksRegisteredAt });
           result = { state: "stored", taskId: task.id, checkIds, nextAction, warnings };
@@ -2399,17 +2340,17 @@ export class Workflow {
           verify(!task.developerChecksPending, "contract-invalid", "责任开发须先用 registerChecks 冻结检查");
           const check = find(task.verification.checks, args.checkId);
           this.checkResponsibility(task, check, currentRole);
-          const upstreamRed = this.upstreamRed(s, task, check);
-          if (upstreamRed) {
+          const inheritedRed = upstreamRed(s, task, check);
+          if (inheritedRed) {
             this.verifyScope(s, task, currentRole, true);
-            result = { state: "red-not-applicable", redNotApplicable: true, jobId: upstreamRed.id, upstreamTaskId: upstreamRed.taskId };
+            result = { state: "red-not-applicable", redNotApplicable: true, jobId: inheritedRed.id, upstreamTaskId: inheritedRed.taskId };
             break;
           }
           need(args.async === undefined || typeof args.async === "boolean", "async 须为布尔值");
           const project = find(s.projects, task.projectId);
           const running = s.checkJobs.find((job) => job.taskId === task.id && job.check.id === check.id && activeCheck(job));
           const job = { id: id(), taskId: task.id, ticketKey:task.ticketKey, projectId: task.projectId, root: project.root,
-            check, files: this.checkPaths(task, check), revision: task.revision, scheduleVersion: task.scheduleVersion ?? 0, requester: currentRole.id,
+            check, files: checkPaths(task, check), revision: task.revision, scheduleVersion: task.scheduleVersion ?? 0, requester: currentRole.id,
             fingerprintEol, rawPaths: task.verification.testWrites,
             state: "queued", createdAt: Date.now(), ...(source && { source }) };
           if (args.async) {
@@ -2422,12 +2363,12 @@ export class Workflow {
           // Keep pre-policy frozen responsibilities resumable under their original terms.
           if (leadCheck(check) || task.verification.browserE2E) assertCheckOwnership(project.root, check, task.verification.browserE2E);
           const scope = this.verifyScope(s, task, currentRole, true);
-          const input = this.checkInput(project.root, task, check);
+          const input = checkInput(project.root, task, check);
           const notes = planningSourceNotes(project.root, task, s.plans.find((item) => item.id === task.planId));
           const advisory = { ownership: scope.ownershipMetrics, ...(notes.length && { sourceNotes: notes }) };
           if (running) { result = { jobId: running.id, state: running.state, ...advisory }; break; }
           if (check.stage !== "red") this.checkPrerequisites(s, task, check, project.root);
-          const cached = this.validCheck(s, task, check);
+          const cached = validCheck(s, task, check);
           if (cached) {
             if (leadCheck(check)) this.completeIndependentChecks(s, task);
             this.recordContract(s, task, false);
@@ -2436,7 +2377,11 @@ export class Workflow {
           }
           if (check.stage === "red") this.checkPrerequisites(s, task, check, project.root);
           Object.assign(job, { input, ownership: scope.ownershipMetrics });
-          if (check.stage === "red") Object.assign(job, redEvidence(project.root, task, check, task.redBaseline?.sources));
+          if (check.stage === "red") {
+            Object.assign(job, redEvidence(project.root, task, check, task.redBaseline?.sources));
+            const snapshot = redSnapshotSpec(task, check);
+            if (snapshot) job.redSnapshot = snapshot;
+          }
           this.recordContract(s, task, false);
           s.checkJobs.push(job);
           result = { jobId: job.id, state: job.state, ...advisory,
@@ -2495,8 +2440,8 @@ export class Workflow {
           if (task.verification) {
             const git = this.verifyScope(s, task, currentRole, true);
             checks = task.verification.checks.filter((check) => !leadCheck(check)).map((check) => {
-              const job = verify(this.deliveryCheck(s, task, check), "evidence-missing", "缺少通过且仍有效的程序检查：" + check.id);
-              return this.checkReference(check, job, task);
+              const job = verify(deliveryCheck(s, task, check), "evidence-missing", "缺少通过且仍有效的程序检查：" + check.id);
+              return checkReference(check, job, task);
             });
             findings = threeDimensions(args.dimensions, checks);
             this.recordContract(s, task, false);
@@ -2588,12 +2533,18 @@ export class Workflow {
         }
         case "review": {
           const task = find(s.tasks, args.taskId);
+          const previousReview = args.recheckCandidate === true ? probeContractReview(task) : undefined;
+          const reviewedAmendment = previousReview && task.scheduleHistory?.findLast(entry =>
+            entry.leadCheckRevision?.reviewId === previousReview.id);
           need(
-            currentRole?.kind === "reviewer" &&
-              currentRole.id === task.assignee &&
-              task.state === "reviewing",
+            currentRole?.kind === "reviewer" && currentRole.projectId === task.projectId &&
+              (task.state === "reviewing" && currentRole.id === task.assignee ||
+                reviewedAmendment && currentRole.id === previousReview.reviewerId && !releasedTaskScope(task)),
             "仅已派审的独立审查者可报告",
           );
+          if (reviewedAmendment)
+            verify(args.leadCheckRevisionId === reviewedAmendment.leadCheckRevision.id,
+              "contract-invalid", "探针修订记录已变化，请用 diagnoseTask 获取当前复核参数");
           verify(
             args.candidate === task.candidate &&
               this.hash(s, task) === task.candidate,
@@ -2608,10 +2559,11 @@ export class Workflow {
           if (args.verdict === "pass") this.assertQuestionsAnswered(s, task, "reviewer");
           need(args.verdict !== "pass" || !handoff.openItems?.some((item) => item.blocking), "审查通过不能含阻塞项，请用 verdict=changes");
           let dimensions, testReview, classification;
+          let checks = [];
           if (task.verification) {
             if (args.verdict === "pass") {
               this.verifyScope(s, task, undefined, true);
-              const checks = this.assertDeliveryProof(s, task);
+              checks = assertDeliveryProof(s, task);
               dimensions = threeDimensions(args.dimensions, checks);
               testReview = this.reviewTestChanges(task, args.testReview);
             } else {
@@ -2624,6 +2576,14 @@ export class Workflow {
           }
           if (args.verdict === "pass" && dimensions)
             verify(Object.values(dimensions).every((item) => item.state === "pass"), "evidence-missing", "审查通过需要三维证据全部通过");
+          if (Array.isArray(args.riskAssessment) && args.riskAssessment.some(item => item?.checkIds !== undefined)) {
+            const remaining = (task.verification?.checks ?? []).filter(check => !checks.some(proof => proof.checkId === check.id));
+            for (const check of remaining) {
+              const job = leadCheck(check) ? validCheck(s, task, check) : deliveryCheck(s, task, check);
+              if (job) checks.push(checkReference(check, job, task));
+            }
+          }
+          const riskAssessment = reviewRiskItems(task, args.riskAssessment, args.verdict === "pass", checks);
           const review = {
             revision: task.revision,
             id: id(),
@@ -2635,11 +2595,13 @@ export class Workflow {
             ...(dimensions && { dimensions }),
             ...(classification && { classification }),
             ...(testReview && { testReview }),
+            ...(riskAssessment && { riskAssessment }),
+            ...(reviewedAmendment && { rechecksReviewId: previousReview.id, leadCheckRevisionId: reviewedAmendment.leadCheckRevision.id }),
             at: Date.now(),
           };
           task.reviews.push(review);
           task.state = args.verdict === "pass" ? reviewedState(task) : "changes_requested";
-          if (task.state === "ready") this.recordDeliveryVerification(s, task);
+          if (task.state === "ready") recordDeliveryVerification(s, task);
           task.assignee = null;
           this.retire(s, task.id);
           this.notice(
@@ -2726,7 +2688,7 @@ export class Workflow {
           task.reworkReason = text(args.reason, "返工原因");
           task.reworkEvidence=[...reworkEvidence];
           task.reworkEvidenceDetails=evidenceItems;
-          this.invalidateCheckReceipts(s, task, reworkEvidence);
+          invalidateCheckReceipts(s, task, reworkEvidence);
           this.retire(s, task.id);
           if(evidenceItems.length)this.notice(s,task.developerId,`rework-evidence:${task.id}:${task.revision}`,
             `返工证据清单 ${task.ticketKey??task.id}：`+evidenceItems.map(item=>`${item.checkId} · ${item.classification} · ${item.reason}`).join('\n'),task.id);
@@ -2741,10 +2703,11 @@ export class Workflow {
           if (task.verification) need(currentRole?.kind === "controller", "实施票须由 DSH 主控核对证据并汇总");
           const testReview = task.verification && task.risk !== "high"
             ? this.reviewTestChanges(task, args.decision?.testReview, { command: "summarize", path: "decision.testReview" }) : undefined;
+          const riskNote = summarizeRisk(task, args.decision?.riskNote);
           let historicalCommit;
           if (task.verification) {
             historicalCommit = this.verifyScope(s, task, undefined, true).drift?.historicalCommit;
-            const checks = this.assertDeliveryProof(s, task, true, historicalCommit);
+            const checks = assertDeliveryProof(s, task, true, historicalCommit);
             const decision = args.decision;
             verify(decision?.candidate === task.candidate, "contract-invalid", "主控须核对并引用当前候选");
             const acceptance = list(decision.acceptance, "主控核对的验收证据").map((item) => ({
@@ -2754,13 +2717,17 @@ export class Workflow {
             need(acceptance.length === task.verification.acceptance.length &&
               task.verification.acceptance.every((ac) => acceptance.filter((item) => item.id === ac.id).length === 1),
               "主控须逐项核对冻结的验收条款");
+            const report = task.reports.findLast(item => item.revision === task.revision && item.candidate === task.candidate);
+            const dimensions = task.risk !== "high" ? summarizeDimensions(task, decision.dimensions, report, checks) : undefined;
             task.controllerEvidence = { candidate: task.candidate, acceptance,
               limits: text(decision.limits, "主控核对后的剩余限制"), by: currentRole.id, at: Date.now(),
+              ...(riskNote && { riskNote }),
+              ...(dimensions && { dimensions, dimensionsReportId: report.id }),
               ...(historicalCommit && { deliveryCommit: historicalCommit }) };
             if (task.risk !== "high") {
               if (testReview) task.controllerEvidence.testReview = testReview;
             }
-          }
+          } else if (riskNote) task.controllerEvidence = { candidate: task.candidate, riskNote, by: currentRole?.id ?? "ui", at: Date.now() };
           if (task.batchId) this.verifyBatchReceipt(s, task, historicalCommit);
           verify(
             historicalCommit || this.hash(s, task) === task.candidate,
@@ -2784,29 +2751,19 @@ export class Workflow {
           requireContract(task);
           const evidence = text(args.evidence, "用户试用验收记录");
           need(task.state === "trial", "请先由主控汇总试用步骤");
-          let historicalCommit;
-          if (task.verification) {
-            historicalCommit = this.verifyScope(s, task, undefined, true).drift?.historicalCommit;
-            this.assertDeliveryProof(s, task, true, historicalCommit);
-          }
-          if (task.batchId) this.verifyBatchReceipt(s, task, historicalCommit);
-          verify(
-            historicalCommit || this.hash(s, task) === task.candidate,
-            "contract-invalid",
-            "试用候选已变化，不能验收旧候选",
-          );
+          const historicalCommit = this.verifyAcceptance(s, task, true);
           const notes = task.sources ? planningSourceNotes(find(s.projects, task.projectId).root, task,
             s.plans.find(item => item.id === task.planId)) : [];
           const planning = specVersionSummary(notes);
           const acceptance = { evidence, acceptedBy: currentRole?.id ?? "ui", candidate: task.candidate, at: Date.now(),
             ...(historicalCommit && { deliveryCommit: historicalCommit }) };
-          task.acceptance = acceptance;
-          task.acceptedAt = acceptance.at;
-          task.state = "accepted";
-          this.retire(s, task.id);
-          this.store.event("task.accepted", { taskId: task.id, ...acceptance });
+          this.recordAcceptance(s, task, acceptance);
           result = { state: "accepted", acceptedBy: acceptance.acceptedBy, ...planning,
             ...(historicalCommit && { deliveryCommit: historicalCommit }) };
+          break;
+        }
+        case "closeRound": {
+          result = this.closeRound(s, currentRole, args, operationId);
           break;
         }
         case "question": {
@@ -2837,15 +2794,23 @@ export class Workflow {
           q.answer = text(args.text, "答复");
           q.answeredBy = currentRole.id;
           const receipt = { state: "stored" };
-          if (args.resume !== false && isController(currentRole, task) && task.state === "paused" &&
-              this.questionScope(s, task, q) === "developer" && q.blocking && !this.blockingQuestions(s, task, "developer").length) {
+          const blocked = args.resume === false ? "resume-disabled" : !isController(currentRole, task) ? "answerer-not-controller" :
+            this.questionScope(s, task, q) !== "developer" ? "question-not-developer" : !q.blocking ? "question-not-blocking" :
+            task.state !== "paused" ? "task-not-paused" : this.blockingQuestions(s, task, "developer").length ? "other-blocking-questions" : null;
+          if (blocked) receipt.resume = { attempted: false, result: task.state, reason: blocked };
+          else {
             const action = { command: "resumeTask", args: { taskId: task.id, reason: "责任开发的阻塞问题已答复" } };
             const recovery = this.tryRecovery(s, currentRole, action);
             if (recovery.executable) receipt.recovery = this.resumeSilentTask(s, task, currentRole, action.args.reason);
             else receipt.remainingBlockers = recovery.remainingBlockers;
+            receipt.resume = { attempted: true, result: task.state, ...(!recovery.executable && { reason: "recovery-blocked" }) };
           }
-          if (q.from !== currentRole.id) this.notice(s, q.from, "answer:" + q.id,
-            "问题已答复：" + q.answer, task.id);
+          if (q.from !== currentRole.id) {
+            const recipient = s.roles.find(role => role.id === q.from);
+            const notice = this.notice(s, q.from, "answer:" + q.id, "问题已答复：" + q.answer, task.id);
+            if (recipient) this.updateDeliveryBlock(s, recipient);
+            receipt.delivery = this.messageDelivery(s, { to: q.from }, notice);
+          }
           result = receipt;
           break;
         }
@@ -2902,7 +2867,8 @@ export class Workflow {
           throw Error("未知命令");
       }
       if (workNotice) this.confirmResponsibility(s, currentRole, workNotice, command);
-      if (command !== "check" || !args.async) this.schedule(s);
+      // Round acceptance must preserve skipped tickets and frozen baselines. Scheduling runs on its own loop.
+      if (!["unbindRole", "closeRound"].includes(command) && (command !== "check" || !args.async)) this.schedule(s);
       if (result.intervention?.mode === "stop" && result.intervention.state === "stopped") result.state = "paused";
       if (command === "enable") result.resumeStatus = this.resumeStatus(s, activeRole(s, args.roleId));
       if (command === "supersede") {
@@ -2941,8 +2907,84 @@ export class Workflow {
     return receipt;
   }
   hash(s, task) {
-    if (task.verification) assertFingerprintMode(task);
-    return this.candidateFingerprint(s, task, fingerprintEol);
+    return hashCandidate(s, task);
+  }
+  verifyAcceptance(s, task, adopt) {
+    let historicalCommit;
+    if (task.verification) {
+      historicalCommit = this.verifyScope(s, task, undefined, adopt).drift?.historicalCommit;
+      assertDeliveryProof(s, task, true, historicalCommit);
+    }
+    if (task.batchId) this.verifyBatchReceipt(s, task, historicalCommit);
+    verify(historicalCommit || this.hash(s, task) === task.candidate,
+      "contract-invalid", "试用候选已变化，不能验收旧候选");
+    return historicalCommit;
+  }
+  recordAcceptance(s, task, acceptance, operationId) {
+    task.acceptance = acceptance;
+    task.acceptedAt = acceptance.at;
+    task.state = "accepted";
+    this.retire(s, task.id);
+    this.store.event("task.accepted", { taskId: task.id, ...acceptance, ...(operationId && { operationId }) });
+  }
+  closeRound(s, role, args, operationId) {
+    need(!role || role.kind === "controller" && (args.projectId === undefined || args.projectId === role.projectId),
+      "仅工作台或本项目主控可整轮收口");
+    const plan = args.planId === undefined ? null : find(s.plans, args.planId);
+    const projectId = args.projectId ?? role?.projectId ?? plan?.projectId ?? (s.projects.length === 1 ? s.projects[0].id : undefined);
+    need(projectId, "工作台须指定 projectId 或 planId");
+    find(s.projects, projectId);
+    need(!plan || plan.projectId === projectId, "计划不属于本项目");
+    const evidence = text(args.evidence, "用户整轮试用验收记录");
+    const reason = text(args.reason, "候选漂移成因");
+    need(args.confirmDrift === undefined || typeof args.confirmDrift === "boolean", "confirmDrift 须为布尔值");
+    const accepted = [], skipped = [];
+    const acceptedBy = role?.id ?? "ui";
+    const at = Date.now();
+    for (const task of s.tasks) {
+      if (task.projectId !== projectId || plan && task.planId !== plan.id) continue;
+      const returnedFromTrial = task.summarizedAt && (task.state === "rework" || task.reworkReason) &&
+        ["queued", "paused", "rework"].includes(task.state);
+      if (task.state !== "trial" && !returnedFromTrial) continue;
+      const ticket = { taskId: task.id, ticketKey: task.ticketKey ?? null };
+      let candidateAtClose, historicalCommit, drift;
+      try {
+        verify(task.state === "trial", "contract-invalid", "已进入返工，需重新交付并试用");
+        verify(!task.acceptance, "contract-invalid", "票据已有验收记录");
+        verify(!s.checkJobs.some(job => jobIncludes(job, task.id) && activeCheck(job)), "evidence-missing", "仍有在途或待对账检查");
+        const assignee = s.roles.find(member => member.id === task.assignee);
+        verify(!task.questions.some(question => question.blocking && !question.answer) &&
+          !task.reworkReason && !task.reworkEvidence?.length && !activeTaskIntervention(task) && !(assignee?.pending > 0),
+        "contract-invalid", "票据仍有待处理输入、返工或干预");
+        requireContract(task);
+        candidateAtClose = this.hash(s, task);
+        drift = candidateAtClose !== task.candidate;
+        if (drift) {
+          // Only an explicit human decision can accept a different working copy under the original delivery evidence.
+          verify(args.confirmDrift === true, "contract-invalid", "未确认候选漂移，请显式传 confirmDrift: true");
+          assertRoundDeliveryProof(s, task);
+          if (task.batchId) {
+            const job = find(s.checkJobs, task.batchReceiptId);
+            verify(job.batchId === task.batchId && jobIncludes(job, task.id) && !job.receipt?.environmentFailure,
+              "evidence-missing", "原交付的累计检查证据与票据不匹配或已失效");
+            this.verifyFrozenBatchReceipt(task, job);
+          }
+        } else {
+          // Reuse the single-ticket gate with baseline adoption disabled for the round.
+          historicalCommit = this.verifyAcceptance(s, task, false);
+        }
+      } catch (error) {
+        if (!error.verificationCode && !error.recordNotFound && !["ENOENT", "EACCES", "EPERM"].includes(error.code)) throw error;
+        skipped.push({ ...ticket, reason: error.message });
+        continue;
+      }
+      const acceptance = { evidence, acceptedBy, candidate: task.candidate, at,
+        ...(historicalCommit && { deliveryCommit: historicalCommit }),
+        ...(drift && { candidateAtClose, driftAccepted: true, driftReason: reason }) };
+      this.recordAcceptance(s, task, acceptance, operationId);
+      accepted.push({ ...ticket, candidate: task.candidate, candidateAtClose });
+    }
+    return { state: accepted.length ? skipped.length ? "partial" : "accepted" : "blocked", accepted, skipped, acceptedBy, at };
   }
   candidateFingerprint(s, task, eol) {
     return candidateFingerprint(find(s.projects, task.projectId).root, task, eol);
@@ -3067,14 +3109,14 @@ export class Workflow {
         verify(task.candidate, "evidence-missing", "原阶段须有同候选的交付报告才可恢复");
       const scope = task.baseline && this.verifyScope(s, task, undefined, true);
       if (task.candidate && task.verification)
-        this.assertDeliveryProof(s, task, ["ready", "trial"].includes(stage), scope?.drift?.historicalCommit);
+        assertDeliveryProof(s, task, ["ready", "trial"].includes(stage), scope?.drift?.historicalCommit);
     }
     if (["assigned", "paused", "rework"].includes(stage))
       this.assertQuestionsAnswered(s, task, "developer");
     if (task.pausedFrom === "reviewing") task.pausedFrom = "waiting_review";
     const result = resumeTask(s, task, role, reason);
     for (const notice of s.notices)
-      if (notice.taskId === task.id && /^(dispatch|review|check|owner-silent|delivery-blocked):/.test(notice.key))
+      if (notice.taskId === task.id && /^(dispatch|review|check|check-revision-requested|owner-silent|delivery-blocked):/.test(notice.key))
         notice.readAt ??= Date.now();
     if (task.state === "waiting_verification") {
       const member = recoveringFingerprint(task) ? task.developerId : role.id;
@@ -3141,8 +3183,9 @@ export class Workflow {
         return { taskId: peer.id, ticketKey: peer.ticketKey, writes: [...peer.writes, ...historicalWrites] };
       });
   }
-  outsideOwnership(s, task, file, git) {
-    if (!git.dirty.includes(file) || overlaps([file], git.protectedPaths)) return null;
+  outsideOwnership(s, task, file, git, capture = false) {
+    if (overlaps([file], git.protectedPaths)) return { file, reason: "protected-input" };
+    if (!git.dirty.includes(file)) return { file, reason: "not-dirty" };
     const peers = s.tasks.filter(peer => peer.projectId === task.projectId && peer.id !== task.id &&
       !releasedTaskScope(peer) && coversPath(peer.writes, file));
     const candidates = peers.filter(peer => (activeScope(peer) || ["queued", "trial", "ready"].includes(peer.state)) &&
@@ -3150,47 +3193,104 @@ export class Workflow {
         coversPath(peer.retainedWrites ?? [], file)));
     const root = find(s.projects, task.projectId).root;
     try {
-      return { file, sha256: fileSha256(root, file), unowned: !peers.some(peer => activeScope(peer) ||
+      const digests = Object.create(null);
+      let bytes;
+      const raw = fingerprint(root, [file], [], undefined, { eol: "raw", fileDigests: digests,
+        onFileBytes: (relative, content) => { if (relative === file) bytes = content; } });
+      if (!bytes) return { file, reason: "vanished" };
+      const snapshotAt = Date.now();
+      const eol = task.baseline?.fingerprintEol ?? "raw";
+      const snapshot = capture ? { raw,
+        normalized: eol === "raw" ? raw : fingerprintEntries([file], [], undefined, { eol, rawPaths: [] }, () => bytes) } : {};
+      return { file, sha256: digests[file], snapshotAt, ...snapshot, unowned: !peers.some(peer => activeScope(peer) ||
           ["trial", "ready", "waiting_batch"].includes(peer.state)) && !candidates.length,
         candidates: candidates.map(peer => ({ taskId: peer.id, ticketKey: peer.ticketKey, state: peer.state })) };
-    } catch { return null; }
+    } catch { return { file, reason: "vanished" }; }
   }
   canConfirmForeignDirty(s, task) {
     return Boolean(task.baseline && !releasedTaskScope(task) &&
       ["queued", "paused", "assigned", "rework"].includes(task.state) &&
       !s.checkJobs.some(job => jobIncludes(job, task.id) && activeCheck(job)));
   }
+  foreignDirtyPause(task) {
+    if (!task.baseline || releasedTaskScope(task) ||
+        !["reviewing", "changes_requested", "trial"].includes(task.state)) return;
+    return { command: "rework", args: { taskId: task.id, adjustScope: true, reason: "暂停原票以重新核对票外文件归属" },
+      ownerRole: "controller" };
+  }
   confirmForeignDirty(s, task, args, role) {
-    need(this.canConfirmForeignDirty(s, task), "确认票外归属须在待准入、暂停或开发阶段，且无在途检查。用 diagnoseTask 核对当前可执行动作");
+    if (!this.canConfirmForeignDirty(s, task)) {
+      const pending = s.checkJobs.some(job => jobIncludes(job, task.id) && activeCheck(job));
+      const nextAction = !pending && this.foreignDirtyPause(task);
+      const message = "确认票外归属须在待准入、暂停或开发阶段，且无在途检查。";
+      if (nextAction) throw Object.assign(Error(message + "由主控用 rework {adjustScope:true} 暂停原票，再用 diagnoseTask 核对最新归属并执行 confirmForeignDirty。"),
+        { verificationCode: "contract-invalid", nextAction });
+      throw Error(message + "用 diagnoseTask 核对当前可执行动作");
+    }
     const reason = text(args.reason, "确认票外归属依据");
     const git = this.ownershipGit(s, task);
     assertCommitReference(args.expectedHead, git.head, "expectedHead");
     verify(git.branch === task.baseline.branch && git.branch !== "HEAD" && git.indexClean, "contract-invalid",
       "确认票外归属须在原分支且暂存区干净");
-    verify(args.confirmForeignDirty && typeof args.confirmForeignDirty === "object" && !Array.isArray(args.confirmForeignDirty),
-      "contract-invalid", "请逐文件填写可能的责任票和当前 SHA-256");
-    const declared = Object.entries(args.confirmForeignDirty);
-    need(declared.length && declared.length <= 20, "每次可确认 1 至 20 个票外文件");
-    const root = find(s.projects, task.projectId).root;
-    const outside = new Map(task.baseline.other);
-    const confirmed = [];
-    const raw = new Map(Object.entries(task.baseline.confirmedForeignDirty ?? {}));
-    for (const [path, claim] of declared) {
-      const [file] = scopePaths([path]);
-      const ownership = this.outsideOwnership(s, task, file, git);
-      verify(ownership && ownership.sha256 === claim?.sha256 &&
-        (claim.taskId === null ? ownership.unowned : ownership.candidates.some(peer => peer.taskId === claim.taskId)),
-        "contract-invalid", "文件已变化、触及冻结输入或责任票不匹配：" + file);
-      outside.set(file, fingerprint(root, [file], [], undefined, { eol: task.baseline.fingerprintEol ?? "raw" }));
-      raw.set(file, fingerprint(root, [file], [], undefined, { eol: "raw" }));
-      verify(ownership.sha256 === fileSha256(root, file), "contract-invalid", "核对期间文件已变化：" + file);
-      confirmed.push({ file, taskId: claim.taskId, sha256: ownership.sha256, ...(claim.taskId === null && { attributed: "unowned" }) });
+    const entries = field => Object.entries(verify(args[field] === undefined ? {} :
+      args[field] && typeof args[field] === "object" && !Array.isArray(args[field]) && args[field],
+    "contract-invalid", `${field} 须为对象`));
+    const strict = entries("confirmForeignDirty");
+    const byOwnership = entries("confirmByOwnership");
+    const byTask = entries("byTask");
+    verify(strict.length + byOwnership.length <= 20 && strict.length + byOwnership.length + byTask.length > 0,
+      "contract-invalid", "逐文件最多确认 20 项，至少提供一种确认方式");
+    const declared = new Map();
+    for (const [mode, entries] of [["sha256", strict], ["ownership", byOwnership]]) {
+      for (const [path, claim] of entries) {
+        const [file] = scopePaths([path]);
+        verify(!declared.has(file.toLowerCase()), "contract-invalid", "同一文件只可声明一种确认方式：" + file);
+        declared.set(file.toLowerCase(), { file, claim, mode });
+      }
     }
+    for (const [taskId, included] of byTask) {
+      const peer = s.tasks.find(peer => peer.id === taskId && peer.id !== task.id && peer.projectId === task.projectId && !releasedTaskScope(peer));
+      verify(peer && included === true, "contract-invalid", "byTask 须指定同项目未释放责任的其他票并设为 true：" + taskId);
+      for (const file of git.dirty) {
+        if (!coversPath(peer.writes, file) || overlaps([file], git.protectedPaths)) continue;
+        const previous = declared.get(file.toLowerCase());
+        verify(!previous || previous.claim?.taskId === taskId, "contract-invalid", "同一文件声明了多个责任票：" + file);
+        if (!previous) declared.set(file.toLowerCase(), { file, claim: { taskId }, mode: "ownership" });
+      }
+    }
+    verify(declared.size, "contract-invalid", "所选责任票没有可确认的票外改动");
+    const outside = new Map(task.baseline.other);
+    const confirmed = [], rejected = [];
+    const raw = new Map(Object.entries(task.baseline.confirmedForeignDirty ?? {}));
+    const peerOwners = new Map(Object.entries(task.baseline.confirmedForeignOwners ?? {}));
+    for (const { file, claim, mode } of declared.values()) {
+      const observation = this.outsideOwnership(s, task, file, git, true);
+      const { candidates = [], sha256, snapshotAt } = observation;
+      const ownerMatches = claim?.taskId === null ? mode === "sha256" && observation.unowned :
+        candidates.some(peer => peer.taskId === claim?.taskId);
+      const failure = observation.reason ?? (!ownerMatches ? "unknown-owner" :
+        mode === "sha256" && sha256 !== claim?.sha256 ? "sha-mismatch" : null);
+      if (failure) {
+        rejected.push({ file, reason: failure, expected: sha256 ?? null, submitted: claim?.sha256 ?? null, candidates });
+        continue;
+      }
+      outside.set(file, observation.normalized);
+      raw.set(file, observation.raw);
+      if (mode === "ownership") peerOwners.set(file, claim.taskId);
+      else peerOwners.delete(file);
+      confirmed.push({ file, taskId: claim.taskId, sha256, snapshotAt, mode, ...(claim.taskId === null && { attributed: "unowned" }) });
+    }
+    if (!confirmed.length) throw Object.assign(Error("票外文件确认失败：" + rejected.map(item =>
+      `${item.file} · ${item.reason}${item.reason === "sha-mismatch" ? "（文件已变化）" : ""}`).join("；")),
+    { verificationCode: "contract-invalid", rejected });
     task.baseline.other = [...outside];
     task.baseline.confirmedForeignDirty = Object.fromEntries(raw);
+    if (peerOwners.size) task.baseline.confirmedForeignOwners = Object.fromEntries(peerOwners);
+    else delete task.baseline.confirmedForeignOwners;
     delete task.preflightFailure;
-    this.store.event("baseline-foreign-ownership-confirmed", { taskId: task.id, head: git.head, by: role.id, reason, confirmed });
-    return { state: "stored", taskId: task.id, confirmed };
+    const mode = confirmed.every(item => item.mode === confirmed[0].mode) ? confirmed[0].mode : "mixed";
+    this.store.event("baseline-foreign-ownership-confirmed", { taskId: task.id, head: git.head, by: role.id, reason, mode, confirmed, rejected });
+    return { state: "stored", taskId: task.id, confirmed, rejected };
   }
   pruneOutside(s, task, git) {
     const root = find(s.projects, task.projectId).root;
@@ -3224,7 +3324,7 @@ export class Workflow {
     if (old.other.some(([file]) => committed.has(file.toLowerCase()) && !removed.has(file))) return false;
     task.baseline = { ...old, head: git.head, index: git.index,
       sourcesHead: old.sourcesHead ?? old.head, deliveryBase: old.deliveryBase ?? old.head,
-      evidenceBase: this.evidenceBase(task), other: old.other.filter(([file]) => !removed.has(file)) };
+      evidenceBase: evidenceBase(task), other: old.other.filter(([file]) => !removed.has(file)) };
     (task.scheduleHistory ??= []).push({ previous: { writes: [...task.writes], baseline: old },
       historyAdvance: { from: drift.from, to: drift.to, ...(drift.candidateEquivalent && { candidateEquivalent: true, conflicts: drift.conflicts }) },
       at: Date.now(), ...audit });
@@ -3236,6 +3336,70 @@ export class Workflow {
       blocker, dimensions: Object.fromEntries(["requirements", "implementation", "system"]
         .map(axis => [axis, { state: "unverified", evidence: "未完成验证：" + blocker }])) } };
   }
+  leadCheckRevisionAction(task, check) {
+    return { command: "reviseSchedule", ownerRole: "controller",
+      args: { taskId: task.id, reviseLeadCheck: { checkId: check.id, candidate: task.candidate,
+        expectedRecipe: leadCheckRevisionToken(task, check) } },
+      requiredParameters: ["reason", "reviseLeadCheck.replacement"],
+      message: "核对失败是否源于探针自身。确认误判后，以原验收条款的可观察结果修订探针。" };
+  }
+  probeReviewAction(task, review, amendment) {
+    return { command: "review", ownerRole: "reviewer", ownerId: review.reviewerId,
+      args: { taskId: task.id, candidate: task.candidate, recheckCandidate: true, leadCheckRevisionId: amendment.id } };
+  }
+  reviseLeadCheck(s, task, args, role) {
+    verify(Object.keys(args).every(field => ["taskId", "reason", "reviseLeadCheck"].includes(field)),
+      "contract-invalid", "主控探针修订须单独执行");
+    const priorReview = probeContractReview(task);
+    verify(task.verification && task.candidate && !releasedTaskScope(task) &&
+      (task.state === "waiting_verification" || priorReview), "contract-invalid",
+      "仅已交付且待主控检查，或原审查仅有契约异议的候选可修订探针");
+    verify(!s.checkJobs.some(job => jobIncludes(job, task.id) && activeCheck(job)),
+      "contract-invalid", "须先收口或对账原票的在途检查");
+    const revision = args.reviseLeadCheck;
+    verify(revision && typeof revision === "object" && revision.candidate === task.candidate &&
+      Object.keys(revision).every(field => ["checkId", "candidate", "expectedRecipe", "replacement"].includes(field)),
+      "contract-invalid", "请引用当前候选及诊断中的探针配方摘要");
+    const frozen = task.verification;
+    const previous = frozen.checks.find(check => check.id === revision.checkId && leadCheck(check));
+    verify(previous, "contract-invalid", "只能修订原票冻结的主控探针");
+    verify(revision.expectedRecipe === leadCheckRevisionToken(task, previous),
+      "contract-invalid", "原探针配方已变化，请重新 diagnoseTask 核对");
+    const replacement = revision.replacement;
+    verify(replacement && typeof replacement === "object" && !Array.isArray(replacement) && Object.keys(replacement).length &&
+      Object.keys(replacement).every(field => leadCheckReplacementFields.includes(field)),
+      "contract-invalid", "探针编号、阶段、AC 覆盖和资源保持冻结，仅可调整 argv、inputs、timeoutMs、expectedOutput、failureOutput");
+    const reason = text(args.reason, "探针误判及对应原验收条款的修订理由");
+    const proposed = { ...previous, ...replacement };
+    const oldScope = [...task.writes, ...task.reads, ...previous.inputs];
+    verify(Array.isArray(proposed.inputs) && scopePaths(proposed.inputs).every(file => coversPath(oldScope, file)),
+      "contract-invalid", "探针输入须落在原探针输入或原票读写范围");
+    const root = find(s.projects, task.projectId).root;
+    const warnings = [];
+    const cleanCheck = check => Object.fromEntries(Object.entries(check).filter(([field, value]) =>
+      !(["expectedOutput", "failureOutput"].includes(field) && (value === "" || value == null)) && field !== "derivedFrom"));
+    const contract = readVerification({ ...frozen, checks: frozen.checks.map(check => cleanCheck(check === previous ? proposed : check)) },
+      { root, writes: task.writes, risk: task.risk, warnings });
+    const revised = contract.checks.find(check => check.id === previous.id);
+    verify(!sameCheckRecipe(previous, revised), "contract-invalid", "新旧探针配方相同");
+    assertDeliveryProof(s, task);
+    const updated = { ...task, verification: { ...frozen, checks: frozen.checks.map(check => check === previous ? revised : check) } };
+    this.verifyScope(s, updated, role, true);
+    verify(this.hash(s, updated) === task.candidate, "contract-invalid", "新探针须继续核验同一交付候选");
+    const invalidated = s.checkJobs.filter(job => job.taskId === task.id && job.check?.id === previous.id && !job.invalidated);
+    const at = Date.now();
+    const audit = { id: id(), checkId: previous.id, candidate: task.candidate, previous, revised,
+      invalidatedJobIds: invalidated.map(job => job.id), ...(priorReview && { reviewId: priorReview.id }) };
+    for (const job of invalidated) job.invalidated = { at, reason, by: role.id, leadCheckRevisionId: audit.id };
+    task.verification = updated.verification;
+    (task.scheduleHistory ??= []).push({ reason, by: role.id, at, leadCheckRevision: audit });
+    this.store.event("checks.lead-revised", { taskId: task.id, reason, by: role.id, at, ...audit });
+    const nextAction = priorReview ? this.probeReviewAction(task, priorReview, audit) :
+      { command: "check", args: { taskId: task.id, checkId: revised.id } };
+    if (priorReview) this.notice(s, priorReview.reviewerId, `probe-review:${audit.id}`,
+      "原候选的主控探针已修订，请核对原异议并提交 review " + JSON.stringify(nextAction.args), task.id);
+    return { state: "stored", taskId: task.id, leadCheckRevision: audit, nextAction, warnings };
+  }
   registerPreparationBudgets(s, task, args, role) {
     const approval = task.checkRevisionApproval;
     const job = s.checkJobs.find(item => item.id === approval.preparationJobId);
@@ -3243,7 +3407,8 @@ export class Workflow {
       "预算修订依据已失效。执行 diagnoseTask 核对原检查");
     verify(args.browserE2E === undefined && args.resources === undefined, "contract-invalid",
       "预算授权仅调整 timeoutMs。用 reviseSchedule {allowCheckRevision:true} 单独授权其他检查修订");
-    this.verifyScope(s, task, role);
+    const root = find(s.projects, task.projectId).root;
+    const { git, requiresRebind } = this.checkRevisionScope(s, task, role, root, false);
     const before = task.verification;
     const proposed = new Map(list(args.checks, "开发检查").map(check => {
       verify(check && typeof check === "object" && (check.preSteps === undefined || (
@@ -3281,12 +3446,12 @@ export class Workflow {
     task.verification = { ...before, checks };
     task.scheduleVersion = (task.scheduleVersion ?? 0) + 1;
     delete task.checkRevisionApproval;
-    const audit = { previous: { verification: before }, approval, budgetChangedChecks: changed,
+    const audit = { previous: { verification: before }, approval: { ...approval, consumedAt: Date.now() }, budgetChangedChecks: changed,
       reason: text(args.reason, "预算修订依据"), by: role.id, at: Date.now() };
     (task.scheduleHistory ??= []).push(audit);
     this.store.event("checks.budget-revised", { taskId: task.id, ...audit });
     return { state: "stored", taskId: task.id, budgetChangedChecks: changed,
-      nextAction: { command: "reviseSchedule", args: { taskId: task.id, reason: "预算已修订，沿原票恢复检查" } } };
+      nextAction: this.revisedChecksNextAction(s, task, git, requiresRebind, "预算已修订，沿原票恢复检查") };
   }
   deliveredScheduleError(task, message) {
     const nextAction = { command: "rework", args: { taskId: task.id, adjustScope: true, reason: "重新核对调度与冻结证据" } };
@@ -3320,25 +3485,24 @@ export class Workflow {
     const reason = text(args.reason, "调整原因");
     const reads = args.reads === undefined ? task.reads : scopePaths(args.reads);
     const next = args.after === undefined ? { dependencies: task.dependencies, dependencyStages: task.dependencyStages } :
-      resolveAfter(s.tasks, task, args.after);
+      prepareDependencyEdit(s, task, args.after);
     if (args.after !== undefined) {
-      validateDependencyEdit(s, task, next);
       for (const id of next.dependencies) {
         const peer = find(s.tasks, id);
         if (next.dependencyStages[id] === "accepted" ? peer.state !== "accepted" :
           !terminalDependency.includes(peer.state) || peer.verification &&
-            !dependencyReceiptValid(task.dependencyReceipts?.[id], peer, s.checkJobs, job => this.intactOutput(job)) && peer.state !== "accepted")
+            !dependencyReceiptValid(task.dependencyReceipts?.[id], peer, s.checkJobs, job => intactOutput(job)) && peer.state !== "accepted")
           this.deliveredScheduleError(task, "新增或调整的前置票需要先满足对应门槛");
       }
     }
     const proposed = { ...task, reads, ...next };
     if (task.verification) {
-      const paths = (ticket, check) => JSON.stringify(scopePaths(this.checkPaths(ticket, check)));
+      const paths = (ticket, check) => JSON.stringify(scopePaths(checkPaths(ticket, check)));
       if (task.verification.checks.some(check => paths(task, check) !== paths(proposed, check)))
         this.deliveredScheduleError(task, "reads 会改变已验证的检查输入");
       const scope = this.verifyScope(s, proposed);
       try {
-        this.assertDeliveryProof(s, proposed, true, scope.drift?.historicalCommit);
+        assertDeliveryProof(s, proposed, true, scope.drift?.historicalCommit);
         if (task.batchId) this.verifyBatchReceipt(s, proposed, scope.drift?.historicalCommit);
       } catch (error) {
         this.deliveredScheduleError(task, error.message);
@@ -3350,9 +3514,8 @@ export class Workflow {
     (task.scheduleHistory ??= []).push({ previous, reason, by: role.id, at: Date.now() });
     return { state: "applied", taskId: task.id, taskState: task.state, scheduleVersion: task.scheduleVersion };
   }
-  verifyScope(s, task, actor, adopt = false) {
+  verifyScope(s, task, actor, adopt = false, git = this.ownershipGit(s, task)) {
     const root = find(s.projects, task.projectId).root;
-    const git = this.ownershipGit(s, task);
     try {
       const scope = assertScope(root, task, this.foreignWrites(s, task), git);
       if (scope.drift && recordedBaselineChanges(root, task, s.plans.find(item => item.id === task.planId), git, scope.drift).length)
@@ -3386,6 +3549,30 @@ export class Workflow {
       }
       throw error;
     }
+  }
+  checkRevisionScope(s, task, role, root, adopt = true) {
+    const git = this.ownershipGit(s, task);
+    const drift = baselineDrift(root, task, git, [...task.writes, ...readsFor(task)]);
+    if (drift && drift.from !== drift.to && !drift.gitBlocker) {
+      const plan = s.plans.find(item => item.id === task.planId);
+      const records = recordedBaselineChanges(root, task, plan, git, drift);
+      if (drift.conflicts.length || records.length) {
+        assertFingerprintMode(task);
+        this.committedRebindScope(s, task, root, git, drift, records, { allowDirtyWrites: true, allowPromotedReads: true });
+        return { git, requiresRebind: true };
+      }
+    }
+    return { git: this.verifyScope(s, task, role, adopt, git) };
+  }
+  revisedChecksNextAction(s, task, git, requiresRebind, reason) {
+    const refresh = { command: "reviseSchedule", args: { taskId: task.id, reason } };
+    if (!requiresRebind) return refresh;
+    const diagnosis = this.diagnoseTask(s, task, git);
+    if (diagnosis.historyAdvance?.historyAdvance) {
+      Object.assign(refresh.args, { refreshBaseline: true, expectedHead: git.head });
+      return refresh;
+    }
+    return diagnosis.nextAction;
   }
   confirmCommit(s, task, args, role, operationId) {
     if (args.partition !== undefined) {
@@ -3456,7 +3643,18 @@ export class Workflow {
     return { root, git, partition };
   }
   ownershipGit(s, task) {
-    return gitState(find(s.projects, task.projectId).root, task, executionPolicy(this.execution, task.projectId).ownershipIgnores);
+    const git = gitState(find(s.projects, task.projectId).root, task, executionPolicy(this.execution, task.projectId).ownershipIgnores);
+    const peerOwners = Object.entries(task.baseline?.confirmedForeignOwners ?? {});
+    if (peerOwners.length) {
+      const peers = new Map(s.tasks.filter(peer => peer.id !== task.id && peer.projectId === task.projectId && activeScope(peer))
+        .map(peer => [peer.id, peer]));
+      git.confirmedPeerFiles = new Set(peerOwners.filter(([file, owner]) => {
+        const peer = peers.get(owner);
+        return peer && coversPath(peer.writes, file) &&
+          (peer.state !== "queued" || coversPath(peer.retainedWrites ?? [], file) || coversPath(peer.ownedDirty ?? [], file));
+      }).map(([file]) => file));
+    }
+    return git;
   }
   verifyOwnedDirty(s, task, hashes) {
     const root = find(s.projects, task.projectId).root;
@@ -3576,16 +3774,16 @@ export class Workflow {
     assertCommitReference(args.expectedHead, drift.to, "expectedHead");
     const plan = s.plans.find(item => item.id === task.planId);
     const records = observed?.records ?? recordedBaselineChanges(root, task, plan, git, drift);
-    const paths = this.committedRebindScope(s, task, root, git, drift, records);
+    const { paths } = this.committedRebindScope(s, task, root, git, drift, records, { preserveChecks: true });
     verify(!records.length, "contract-invalid", "本次提交还含入库的冻结规划记录，请按 diagnoseTask 核对记录归属");
     verify(JSON.stringify(scopePaths(args.paths)) === JSON.stringify(scopePaths(paths)),
       "contract-invalid", "paths 必须精确对应诊断的提交重叠路径");
     verify(this.hash(s, task) === task.candidate && (task.candidateScope !== 2 || candidateTreeFingerprint(root, task, git.head) === task.candidate),
       "contract-invalid", "提交内容与已交付候选指纹不等价，不能保留原检查；请沿原票重新交付并重跑绿/完整检查。");
-    const preserved = this.assertDeliveryProof(s, task).map(proof => proof.jobId);
+    const preserved = assertDeliveryProof(s, task).map(proof => proof.jobId);
     const old = task.baseline;
     const baseline = { ...scopeBaseline(root, task, this.foreignWrites(s, task), git), sources: old.sources, sourceFiles: old.sourceFiles,
-      sourcesHead: old.sourcesHead ?? old.head, tests: old.tests, deliveryBase: old.deliveryBase ?? old.head, evidenceBase: this.evidenceBase(task) };
+      sourcesHead: old.sourcesHead ?? old.head, tests: old.tests, deliveryBase: old.deliveryBase ?? old.head, evidenceBase: evidenceBase(task) };
     return { root, git, drift, paths, preserved, baseline };
   }
 
@@ -3594,30 +3792,58 @@ export class Workflow {
     const git = this.ownershipGit(s, { ...task, writes: originalTaskWrites(task) });
     return includeIgnoredScopeWrites(find(s.projects, task.projectId).root, task, git);
   }
-  committedRebindScope(s, task, root, git, drift, records = []) {
+  committedRebindScope(s, task, root, git, drift, records = [], { preserveChecks = false, allowDirtyWrites = false, allowPromotedReads = false } = {}) {
     assertFrozenTicket(root, task, git);
     const reject = (message) => verify(false, "contract-invalid", message + "；请用 diagnoseTask 核对原票");
-    if (!task.verification || !task.baseline ||
-        !["assigned", "rework", "paused", "changes_requested", "ready", "trial", "waiting_review", "waiting_verification", "waiting_batch", "reviewing"].includes(task.state))
+    if (!task.verification || !task.baseline || releasedTaskScope(task) ||
+        !["queued", "assigned", "rework", "paused", "changes_requested", "ready", "trial", "waiting_review", "waiting_verification", "waiting_batch", "reviewing"].includes(task.state))
       reject("仅支持未验收且仍有原责任的实施票");
+    if (drift?.gitBlocker) reject(drift.gitBlocker);
     if (!drift || drift.from === drift.to || (!drift.conflicts.length && !records.length)) reject("没有写集内提交或冻结时未提交的规划记录，请用普通基线对账");
-    if (drift.gitBlocker) reject(drift.gitBlocker);
     if (git.branch === "HEAD") reject("游离 HEAD 无法确认原分支");
-    const observedOnly = drift.conflicts.filter((file) => !coversPath(task.writes, file));
-    if (observedOnly.length) reject("提交触及只读输入：" + summarizePaths(observedOnly));
-    if (drift.conflicts.length && !protectsAdmittedWrites(task))
+    const paths = drift.conflicts.filter(file => coversPath(task.writes, file));
+    const observedOnly = drift.conflicts.filter(file => !coversPath(task.writes, file));
+    const observed = observedOnly.map(file => ({
+      path: file,
+      checkIds: task.verification.checks.filter(check =>
+        overlaps([file], [...check.inputs, ...(check.requiredArtifacts ?? [])])).map(check => check.id),
+      owners: s.tasks.filter(peer => peer.id !== task.id && peer.projectId === task.projectId &&
+        coversPath(originalTaskWrites(peer), file)).map(peer => ({ taskId: peer.id, ticketKey: peer.ticketKey })),
+    }));
+    const readConflicts = observed.filter(({ path }) => overlaps([path], frozenReadsFor(task)));
+    if (readConflicts.length) reject("提交触及只读输入：" + readConflicts.slice(0, 8).map(({ path, checkIds, owners }) =>
+      `${path}（检查 ${checkIds.join("、") || "无"}，${owners.length
+        ? "列入别票写集 " + owners.map(owner => owner.ticketKey ?? owner.taskId).join("、") : "未列入别票写集"}）`).join("、") +
+      "。主控需核对显式 reads 或必需产物的变更依据，再处理原票契约");
+    if (preserveChecks && observed.length)
+      reject("检查输入已随提交变化：" + summarizePaths(observedOnly) + "。请沿原票重绑并重新运行受影响的检查");
+    const canPromoteReads = !preserveChecks && allowPromotedReads;
+    if (paths.length && !protectsAdmittedWrites(task, { allowPromotedReads: canPromoteReads }))
       reject("无法证明原始写集及承接归属与准入时一致");
-    const dirty = git.dirty.filter((file) => coversPath(task.writes, file) || overlaps([file], readsFor(task)));
-    if (dirty.length) reject("冻结路径工作树仍有残留：" + summarizePaths(dirty));
+    const promotedReads = canPromoteReads && paths.length
+      ? scopePaths(admittedReadPromotions(task).filter(file => overlaps([file], paths))) : [];
+    const dirtyReads = git.dirty.filter((file) => !coversPath(task.writes, file) && overlaps([file], readsFor(task)));
+    if (dirtyReads.length) reject("冻结路径工作树仍有残留：" + summarizePaths(dirtyReads));
+    const dirtyWriteFiles = git.dirty.filter((file) => coversPath(task.writes, file));
+    if (dirtyWriteFiles.length && (preserveChecks || !allowDirtyWrites))
+      reject("冻结路径工作树仍有残留：" + summarizePaths(dirtyWriteFiles));
     const unproven = records.filter((note) => !note.proven);
     if (unproven.length) reject("无法证明已入库规划记录保留冻结正文或仅追加受认可记录：" + summarizePaths(unproven.map((note) => note.file)));
-    if (records.length && git.dirty.length) reject("工作树仍有未提交文件，请保留改动并核对归属：" + summarizePaths(git.dirty));
+    // A file the controller already confirmed by ownership (confirmForeignDirty)
+    // is proven foreign in-flight work: assertOutsideScope accepts it by digest,
+    // so it must not be counted as an unowned leftover here either.
+    const confirmedForeign = new Set(Object.keys(task.baseline?.confirmedForeignDirty ?? {}));
+    const nonWriteDirty = git.dirty.filter((file) => !coversPath(task.writes, file) && !confirmedForeign.has(file));
+    if (records.length && (allowDirtyWrites ? nonWriteDirty.length : git.dirty.length))
+      reject("工作树仍有未提交文件，请保留改动并核对归属：" + summarizePaths(allowDirtyWrites ? nonWriteDirty : git.dirty));
     if (s.checkJobs.some((job) => jobIncludes(job, task.id) && activeCheck(job))) reject("仍有未完成检查，请等待或对账原作业");
     const conflict = s.tasks.filter((peer) => peer.id !== task.id && activeScope(peer))
       .map((peer) => this.scopeConflict(s, task, peer)).find(Boolean);
     if (conflict) reject(conflict.message);
-    assertOutsideScope(root, task, this.foreignWrites(s, task), git, committedOutsideBaseline(root, task, drift, git));
-    return drift.conflicts;
+    const pruned = committedOutsideBaseline(root, task, drift, git, [], { confirmedCheckInputs: observedOnly });
+    assertOutsideScope(root, task, this.foreignWrites(s, task), git, pruned);
+    const dirtyWrites = Object.fromEntries(dirtyWriteFiles.map(file => [file, worktreeDirtyDigest(root, file)]));
+    return { paths, checkInputDrift: observed, pruned, dirtyWrites, promotedReads };
   }
   runRecovery(state, role, action, preview = false) {
     const engine = new Workflow({
@@ -3644,7 +3870,7 @@ export class Workflow {
     const make = (command, args = {}) => ({ command, args: { taskId: task.id, reason: reason ?? "按原票诊断恢复", ...args } });
     const suggestion = diagnosis.nextAction;
     if (suggestion?.args?.refreshSourceDigest === true || suggestion?.args?.realignRedBaseline === true || diagnosis.unownedWrites || diagnosis.suggestedTests ||
-        suggestion?.args?.confirmForeignDirty !== undefined)
+        suggestion?.command === "confirmForeignDirty" || suggestion?.args?.confirmForeignDirty !== undefined)
       return { ...this.tryRecovery(s, role, suggestion), requiresConfirmation: true };
     if (diagnosis.violations?.some(violation => violation.path === "sources.tickets"))
       return { candidate: suggestion, executable: false, remainingBlockers: [diagnosis.reason] };
@@ -3652,8 +3878,9 @@ export class Workflow {
     const explicit = ["confirmCommit", "rebindCommittedWork"].includes(suggestion?.command);
     if (["reviseSchedule", "rework", "resumeTask", "redeliver"].includes(suggestion?.command) || explicit)
       candidate = { ...suggestion, args: { ...suggestion.args, ...(reason && { reason }) } };
-    if (!candidate && suggestion?.returnToOwner?.command === "rework")
-      candidate = make("rework", { ...suggestion.returnToOwner.args, ...(reason && { reason }) });
+    const returnToOwner = diagnosis.reference?.returnToOwner;
+    if (!candidate && returnToOwner)
+      candidate = make("rework", { ...returnToOwner.args, ...(reason && { reason }) });
     if (suggestion?.command === "yieldForSchedule")
       candidate = make("rework", { adjustScope: true });
     if (["assigned", "rework"].includes(task.state) && !task.deliveredAt &&
@@ -3665,7 +3892,7 @@ export class Workflow {
     if (!candidate && ["reviewing", "waiting_review", "waiting_verification"].includes(task.state) &&
         ["review-missing", "evidence-missing"].includes(diagnosis.blocker ?? diagnosis.classification) && !diagnosis.checkId)
       candidate = make("resumeTask");
-    if (!candidate && task.state === "paused" && !["contract-invalid", "baseline-drift-blocked"].includes(diagnosis.classification))
+    if (!candidate && task.state === "paused" && !["contract-invalid", "baseline-drift-blocked", "check-revision-authorized"].includes(diagnosis.classification))
       candidate = make("resumeTask");
     if (!candidate) return { candidate: null, executable: false, remainingBlockers: [diagnosis.reason] };
     return { ...this.tryRecovery(s, role, candidate), ...(explicit && { requiresConfirmation: true }) };
@@ -3736,9 +3963,19 @@ export class Workflow {
         { intervention, hostJobsSettled, ...pendingInputStatus(member), activeChecks: jobs.map(job => ({ id: job.id, state: job.state })),
           ...(uncertain && { actionRequired: { command: "reconcileCheck", args: { jobId: uncertain.id }, requiredParameters: ["evidence"] } }),
           ...(fallback && !uncertain && { actionRequired: { ...resolution("confirm-stopped"), requiredParameters: ["reason", "evidence"] } }),
-          ...(intervention.state === "requested" && { remedies: ["retry", "withdraw"].map(decision =>
+          ...(intervention.state === "requested" && { remedies: (member?.sessionId === intervention.sessionId ? ["retry", "withdraw"] : ["withdraw"]).map(decision =>
             ({ ...resolution(decision), requiredParameters: ["reason"] })) }),
         });
+    }
+    const approval = task.checkRevisionApproval;
+    if (task.state === "paused" && !task.candidate && task.assignee === task.developerId && approval &&
+        !approval.revokedAt && approval.scheduleVersion === (task.scheduleVersion ?? 0)) {
+      const budget = approval.preparationJobId && preparationRevision(s, task, s.checkJobs.find(job => job.id === approval.preparationJobId));
+      const registration = budget?.registration ?? { ...action("registerChecks", { replace: true }),
+        ownerRole: "developer", ownerId: task.developerId, requiredParameters: ["reason", "checks"] };
+      if (!approval.preparationJobId || budget)
+        return result("check-revision-authorized", "责任开发须在 paused 状态登记获批的检查修订", registration,
+          { checkRevisionApproval: approval });
     }
     const retiredDependency = task.state === "queued" && task.dependencies.find(id => {
       const predecessor = find(s.tasks, id);
@@ -3801,7 +4038,7 @@ export class Workflow {
           });
         }
       }
-      const drift = baselineDrift(root, task, git, [...task.writes, ...readsFor(task)], { compareCandidate: true });
+      let drift = baselineDrift(root, task, git, [...task.writes, ...readsFor(task)], { compareCandidate: true });
       const historicalCommit = drift?.historicalCommit;
       const pruned = committedOutsideBaseline(root, task, drift, git);
       if (pruned.length) {
@@ -3842,6 +4079,14 @@ export class Workflow {
           if (error.verificationCode === "ownership-timeout") throw error;
         }
       }
+      // A delivered candidate can cover only the write set; rebind also checks
+      // inputs used to build verification evidence.
+      if (task.candidate && drift?.committedBetween.some(file =>
+        !drift.conflicts.includes(file) && overlaps([file], readsFor(task)))) {
+        const scope = baselineDrift(root, task, git, [...task.writes, ...readsFor(task)]);
+        drift = { ...drift, conflicts: scope.conflicts, inheritedConflicts: scope.inheritedConflicts,
+          blockingCondition: drift.blockingCondition ?? scope.blockingCondition };
+      }
       const redBasis = task.redBaseline ?? task.baseline;
       const failedRed = task.verification.checks.filter(check => check.stage === "red").map(check =>
         s.checkJobs.findLast(job => job.taskId === task.id && job.revision === task.revision &&
@@ -3851,7 +4096,7 @@ export class Workflow {
       const redScopeUnverified = task.redBaselinePending || !implementationScopeMatches(task, redBasis);
       const legacyHandoff = !task.candidate && !task.redBaseline && task.baseline.admissionOwnedDirty?.some(file =>
         !coversPath(task.verification.testWrites, file)) &&
-        (task.developerChecksPending || task.verification.checks.some(check => check.stage === "red" && !this.deliveryCheck(s, task, check)));
+        (task.developerChecksPending || task.verification.checks.some(check => check.stage === "red" && !deliveryCheck(s, task, check)));
       if (failedRed || redScopeUnverified || legacyHandoff) {
         const repair = this.redBaselineRecovery(s, task, root, git);
         if (repair) {
@@ -3898,20 +4143,35 @@ export class Workflow {
           effect: "核对已入库文件保留冻结正文或仅追加受认可记录，逐文件确认提交指纹" });
         if (explicit) {
           try {
-            const overlap = this.committedRebindScope(s, task, root, git, drift, records);
-            const rerunRed = drift.conflicts.length ? task.verification.checks.filter(check => check.stage === "red" && !this.validCheck(s, task, check)).map(check => check.id) : [];
+            const { paths: overlap, checkInputDrift, dirtyWrites, promotedReads } = this.committedRebindScope(s, task, root, git, drift, records, { allowDirtyWrites: true, allowPromotedReads: true });
+            const dirtyWritePaths = Object.keys(dirtyWrites);
+            const rerunRed = drift.conflicts.length ? task.verification.checks.filter(check => check.stage === "red" && !validCheck(s, task, check)).map(check => check.id) : [];
             const resume = action("rebindCommittedWork", { reason: "主控核对提交差异与原票写集归属后沿原票重绑", expectedBase: drift.from, expectedHead: drift.to, confirmPaths: overlap,
+              ...(dirtyWritePaths.length && { confirmOwnedDirty: dirtyWrites }),
+              ...(promotedReads.length && { confirmReadPromotion: promotedReads }),
               ...(records.length && { confirmRecordedBaseline: Object.fromEntries(records.map(({ file, toDigest }) => [file, toDigest])) }) });
             for (const item of blockingConditions) item.remedy = resume;
-            const stopped = task.state === "paused";
+            const stopped = ["paused", "queued"].includes(task.state) && !task.candidate;
+            const changedEvidence = task.candidate && !drift.contentDrift && task.verification.checks.find(check =>
+              check.stage !== "red" && !leadCheck(check) && checkInputDrift.some(item => item.checkIds.includes(check.id)) &&
+              !deliveryCheck(s, task, check));
+            const evidence = task.candidate && checkInputDrift.length
+              ? [changedEvidence?.id ?? task.verification.checks.find(check => check.stage === "full").id] : [];
             const next = stopped ? resume : ["assigned", "rework"].includes(task.state)
               ? action("yieldForSchedule", { reason: "写集已提交，停写后交主控核对归属" })
-              : action("rework", { reason: "归档旧交付证据，暂停并核对提交归属", adjustScope: true });
-            return result(records.length && !drift.conflicts.length ? "baseline-drift-record-rebindable" : "baseline-drift-owned-rebindable",
+              : { ...action("rework", { reason: "归档旧交付证据，暂停并核对提交归属", adjustScope: true,
+                ...(evidence.length && { evidence }) }), ownerRole: "controller" };
+            const classification = changedEvidence ? "evidence-missing" :
+              records.length && !drift.conflicts.length ? "baseline-drift-record-rebindable" : "baseline-drift-owned-rebindable";
+            return result(classification,
               rerunRed.length ? "主控显式确认后可沿原票重绑；无有效历史红，须在原实现基线上重取真实红，再跑新 HEAD 的绿与完整检查" :
                 "主控显式确认后可沿原票重绑，须用新 HEAD 的绿与完整检查",
               next,
-              { ...drift, ...gitContext, blockingConditions, ...(rerunRed.length && { rerunRed }), ...(records.length && { recordedBaseline: records }),
+              { ...drift, ...gitContext, blockingConditions, ...(checkInputDrift.length && { checkInputDrift }),
+                ...(dirtyWritePaths.length && { dirtyWrites: dirtyWritePaths }),
+                ...(promotedReads.length && { promotedReads }),
+                ...(changedEvidence && { checkId: changedEvidence.id }),
+                ...(rerunRed.length && { rerunRed }), ...(records.length && { recordedBaseline: records }),
                 recovery: { candidate: resume, executable: false, requiredParameters: ["reason"], remainingBlockers: stopped ? [] : ["先交回并暂停原票"],
                   effect: "保留原票及历史；更新基线，要求新的绿及完整检查" },
                 ...(stopped ? {} : { afterStop: resume }) });
@@ -3972,21 +4232,45 @@ export class Workflow {
       if (task.candidate && !historicalCommit && this.hash(s, task) !== task.candidate) return result("contract-invalid",
         "候选输入已变化，须按原票重新交付", action("rework", { reason: "已核对候选输入变化，按原票重新交付" }));
       const checkBlocker = (check) => {
-        const input = this.checkInput(root, task, check);
+        const input = checkInput(root, task, check);
         const job = s.checkJobs.findLast((item) => item.taskId === task.id && item.check.id === check.id &&
-          sameCheckRecipe(item.check, check) && this.checkContentMatches(item, input));
-        const nextAction = job?.classification === "preparation-timeout" ? preparationActionView(s, job, task) :
+          !item.invalidated && sameCheckRecipe(item.check, check) && checkContentMatches(item, input));
+        const failedProbe = leadCheck(check) && job?.state === "failed" && !job.environmentFailure;
+        const suggestion = failedProbe ? { command: "checkEvidence", args: { jobId: job.id } } :
+          job?.classification === "preparation-timeout" ? preparationActionView(s, job, task) :
           job?.redFailureReason && job.nextAction ? job.nextAction : evidenceNextAction(task, check, controller(s, task.projectId)?.id);
+        const inactiveDeveloper = suggestion.command === "check" && !leadCheck(check) &&
+          !this.canRunDeveloperCheck(task, suggestion.ownerId ?? task.developerId);
+        if (inactiveDeveloper) {
+          const evidence = { blocker: "checks-missing", checkId: check.id };
+          if (task.state === "paused") {
+            const pending = s.checkJobs.some(job => jobIncludes(job, task.id) && activeCheck(job));
+            return result("check-paused", "原票已暂停，恢复调度后由责任开发执行冻结检查。",
+              pending ? action("checkStatus") : { ...action("resumeTask", { reason: "沿原票恢复冻结检查" }), ownerRole: "controller" }, evidence);
+          }
+          if (task.state === "queued")
+            return result("waiting-admission", task.waitReason ?? "等待重新准入后执行冻结检查", null, evidence);
+        }
         return result(job?.classification ?? "evidence-missing", `检查 ${check.id}：${job?.error ?? "缺少有效回执"}`,
-          nextAction, { message:nextAction.message,blocker: "checks-missing", checkId: check.id,
+          inactiveDeveloper ? null : suggestion, { message:suggestion.message,blocker: "checks-missing", checkId: check.id,
+              ...(job?.receipt?.redProofDiagnostics && { redProofDiagnostics: job.receipt.redProofDiagnostics }),
+              ...(leadCheck(check) && (!job || failedProbe) &&
+                !s.checkJobs.some(item => jobIncludes(item, task.id) && activeCheck(item)) &&
+                { actionRequired: this.leadCheckRevisionAction(task, check) }),
+              ...(inactiveDeveloper && { reference: evidenceNextAction(task, check, controller(s, task.projectId)?.id) }),
               ...(job&&{evidence:{command:activeCheck(job)?'checkStatus':'checkEvidence',args:activeCheck(job)?{taskId:task.id}:{jobId:job.id}}}),
           ...(job?.environmentFailure && { environmentFailure: true, environmentFailureReason: job.environmentFailureReason,
-            hint: nextAction.message??job.hint, membersCanRetry: job.membersCanRetry }),
+            hint: suggestion.message??job.hint, membersCanRetry: job.membersCanRetry }),
           ...(job?.classification==='preparation-timeout' && preparationTiming(job.check,job.receipt)) });
       };
       if (task.state === "changes_requested") {
         const review = task.reviews.at(-1);
-        return result(review?.classification ?? "evidence-missing", review?.findings ?? "审查未通过", action("inspect"));
+        const probeReview = probeContractReview(task);
+        const amended = probeReview && task.scheduleHistory?.findLast(entry => entry.leadCheckRevision?.reviewId === probeReview.id);
+        const actions = probeReview ? task.verification.checks.filter(leadCheck).map(check => this.leadCheckRevisionAction(task, check)) : [];
+        return result(review?.classification ?? "evidence-missing", review?.findings ?? "审查未通过",
+          amended ? this.probeReviewAction(task, probeReview, amended.leadCheckRevision) : action("inspect"),
+          { ...(actions.length === 1 && { actionRequired: actions[0] }), ...(actions.length > 1 && { remedies: actions }) });
       }
       const developerChecks = task.verification.checks.filter(item => !leadCheck(item));
       if (recoveringFingerprint(task)) {
@@ -3995,15 +4279,15 @@ export class Workflow {
       }
       if (!historicalCommit) {
         for (const check of developerChecks) {
-          if (!this.deliveryCheck(s, task, check)) return checkBlocker(check);
+          if (!deliveryCheck(s, task, check)) return checkBlocker(check);
         }
       }
       if (!task.candidate) return result("evidence-missing", "尚未提交同候选的交付报告", action("inspect"));
-      this.assertDeliveryProof(s, task, false, historicalCommit);
+      assertDeliveryProof(s, task, false, historicalCommit);
       if (["reviewing", "waiting_review"].includes(task.state))
         return result("evidence-missing", task.waitReason ?? "缺少当前候选的独立审查通过回执", action("inspect"), { blocker: "review-missing" });
       if (task.state === "waiting_verification") {
-        const pending = task.verification.checks.find((item) => leadCheck(item) && !this.validCheck(s, task, item));
+        const pending = task.verification.checks.find((item) => leadCheck(item) && !validCheck(s, task, item));
         if (pending) return checkBlocker(pending);
       }
       if (task.batchId && task.state === "waiting_batch") {
@@ -4013,7 +4297,7 @@ export class Workflow {
           job ? { command: "checkEvidence", args: { jobId: job.id } } : action("inspect"));
       }
       if (["ready", "trial"].includes(task.state)) {
-        this.assertDeliveryProof(s, task, true, historicalCommit);
+        assertDeliveryProof(s, task, true, historicalCommit);
         if (task.batchId) this.verifyBatchReceipt(s, task, historicalCommit);
         return result(task.state === "trial" ? "awaiting-user" : "ready",
           task.state === "trial" ? "待用户试用验收" : "当前候选证据满足程序门槛，待主控汇总", null,
@@ -4024,23 +4308,33 @@ export class Workflow {
     } catch (error) {
       if (error.outsideFile && scannedGit) {
         const outsideOwnership = this.outsideOwnership(s, task, error.outsideFile, scannedGit);
-        if (outsideOwnership) {
-          const { file, sha256, candidates, unowned } = outsideOwnership;
+        if (!outsideOwnership.reason) {
+          const { file, sha256, candidates, unowned, snapshotAt } = outsideOwnership;
           const pending = s.checkJobs.some(job => jobIncludes(job, task.id) && activeCheck(job));
-          const canConfirmNow = (unowned || candidates.length > 0) && this.canConfirmForeignDirty(s, task) &&
+          const canConfirmOwnership = (unowned || candidates.length > 0) &&
             scannedGit.indexClean && scannedGit.branch === task.baseline.branch && scannedGit.branch !== "HEAD";
-          const confirmation = { ...action(unowned ? "confirmForeignDirty" : "reviseSchedule", { expectedHead: scannedGit.head,
-            reason: unowned ? "已核对该票外改动没有活动责任票，确认保留其当前字节" : "核对票外文件的责任票及当前字节",
-            ...((unowned || candidates.length === 1) && { confirmForeignDirty: { [file]: { taskId: candidates[0]?.taskId ?? null, sha256 } } }) }),
-            ownerRole: "controller" };
-          const nextAction = pending ? action("checkStatus") : canConfirmNow && candidates.length <= 1 ? confirmation : action("inspect");
+          const canConfirmNow = canConfirmOwnership && this.canConfirmForeignDirty(s, task);
+          const pause = !pending && canConfirmOwnership && !canConfirmNow && this.foreignDirtyPause(task);
+          const confirmation = { ...action("confirmForeignDirty", { expectedHead: scannedGit.head,
+            reason: unowned ? "已核对该票外改动没有活动责任票，确认保留其当前字节" : "已核对票外文件的责任票" }),
+            ownerRole: "controller", snapshotAt, snapshotStaleMs: Math.max(0, Date.now() - snapshotAt),
+            message: unowned ? "核对后确认当前字节，取样之后字节可能变化。" : "责任方仍在写入时请用 confirmByOwnership，由平台读取当前字节。" };
+          const choices = candidates.map(peer => ({ ...peer, args: { ...confirmation.args,
+            confirmByOwnership: { [file]: { taskId: peer.taskId } } } }));
+          if (unowned) confirmation.args.confirmForeignDirty = { [file]: { taskId: null, sha256 } };
+          else if (choices.length === 1) confirmation.args = choices[0].args;
+          const chooseOwner = choices.length > 1 ? { ...confirmation, choices, requiredParameters: ["confirmByOwnership"] } : null;
+          const nextAction = pending ? action("checkStatus") : pause ||
+            (canConfirmNow && !chooseOwner ? confirmation : action("inspect"));
           const remedy = pending ? "先等原票检查结束或对账，再重新诊断获取最新文件摘要。" :
+            pause ? "先由主控暂停原票，再重新诊断并执行 confirmForeignDirty 核对最新归属。" :
             canConfirmNow && unowned ? "核对该文件的来源。需入库时由授权人提交；需保留现有字节时，用 confirmForeignDirty 确认当前 SHA-256。" :
-            canConfirmNow ? "核实责任票后可立即对账当前字节。对方再次修改文件后须重新确认。" :
+            canConfirmNow ? "核实责任票后可对账。责任方仍在写入时请用 confirmByOwnership，由平台读取当前字节。" :
               "请核对责任票、原分支和暂存区。当前阶段无法确认该文件归属。";
           return result("contract-invalid", `发现未归属的改动：${file}。${remedy}`, nextAction, {
-            outsideOwnership: { ...outsideOwnership, canConfirmNow },
-            ...(canConfirmNow && candidates.length > 1 && { actionRequired: { ...confirmation, requiredParameters: ["confirmForeignDirty"] } }),
+            outsideOwnership: { ...outsideOwnership, canConfirmNow, snapshotStaleMs: confirmation.snapshotStaleMs },
+            ...(pause && { afterStop: chooseOwner ?? confirmation }),
+            ...(canConfirmNow && chooseOwner && { actionRequired: chooseOwner }),
           });
         }
       }
@@ -4077,13 +4371,17 @@ export class Workflow {
       planning: task.sources, sourceNotes: planningSourceNotes(root, task, s.plans.find((item) => item.id === task.planId)),
       files: report?.manifest?.files ?? [], testChanges: report?.manifest?.testChanges ?? [],
       acceptance: task.verification.acceptance,
-      independentReview: { required: task.risk === "high", ...(review && { verdict: review.verdict, reportId: review.id }) },
+      independentReview: { required: task.risk === "high", ...(review && { verdict: review.verdict, reportId: review.id }),
+        ...(task.riskItems?.length && { riskItems: task.riskItems }),
+        ...(review?.riskAssessment && { riskAssessment: review.riskAssessment }) },
+      ...(report?.dimensions && { developerDimensions: report.dimensions }),
+      ...(task.controllerEvidence?.candidate === task.candidate && { controllerEvidence: task.controllerEvidence }),
       ...(task.batchId && { batch: { batchId: task.batchId, valid: batchValid,
         ...(batchValid && { evidence: { command: "checkEvidence", args: { jobId: batchJob.id } } }) } }),
       checks: task.verification.checks.map((check) => {
-        const job = !historicalCommit && this.deliveryCheck(s, task, check);
+        const job = !historicalCommit && deliveryCheck(s, task, check);
         const reusable = Boolean(job && (leadCheck(check) || report?.checks.some((proof) => proof.jobId === job.id)));
-        const historical = historicalCommit && this.historicalCheck(s, task, check);
+        const historical = historicalCommit && historicalCheck(s, task, check);
         return { id: check.id, stage: check.stage, argv: check.argv, covers: check.covers, inputs: check.inputs,
           expectedExit: check.expectedExit, expectedOutput: check.expectedOutput, failureOutput: check.failureOutput,
           reusable, owner: leadCheck(check) ? "controller" : "developer",
@@ -4102,26 +4400,13 @@ export class Workflow {
     }
     return result;
   }
-  checkReference(check, job, task) {
-    return { checkId: check.id, stage: check.stage, covers: check.covers, jobId: job.id, output: job.output,
-      ...(task && job.taskId !== task.id && { redNotApplicable: true, upstreamTaskId: job.taskId }) };
-  }
-  evidenceBase(task) {
-    // An approved clean forward rebind updates the Git gate, not the identity of unchanged evidence.
-    return task.baseline.evidenceBase ?? [task.baseline.head, task.baseline.index];
-  }
-  checkInput(root, task, check) {
-    assertFingerprintMode(task);
-    return JSON.stringify([...this.evidenceBase(task),
-      fingerprint(root, this.checkPaths(task, check), [], undefined, { rawPaths: task.verification.testWrites })]);
-  }
-  checkPaths(task, check) {
-    return [...new Set([...task.writes, ...task.reads, ...check.inputs])];
+  canRunDeveloperCheck(task, roleId) {
+    return roleId === task.developerId && (["assigned", "rework"].includes(task.state) || recoveringFingerprint(task));
   }
   checkResponsibility(task, check, role) {
     need(leadCheck(check)
       ? role.kind === "controller" && task.state === "waiting_verification" && !recoveringFingerprint(task)
-      : role.id === task.developerId && (["assigned", "rework"].includes(task.state) || recoveringFingerprint(task)),
+      : this.canRunDeveloperCheck(task, role.id),
     "该检查不属于当前角色或阶段");
     if(leadCheck(check)) {
       const issue=probeSeparationIssues(task.verification.checks).find(issue=>issue.checkId===check.id);
@@ -4214,12 +4499,23 @@ export class Workflow {
     const reason = text(args.reason, "取红续接依据");
     task.redBaseline = snapshot;
     delete task.redBaselinePending;
-    const rerunRed = task.verification.checks.filter(check => check.stage === "red" && !this.deliveryCheck(s, task, check)).map(check => check.id);
+    const rerunRed = task.verification.checks.filter(check => check.stage === "red" && !deliveryCheck(s, task, check)).map(check => check.id);
+    const resumed = task.state === "paused" && !task.pausedFrom && task.assignee === task.developerId;
+    if (resumed) {
+      this.assertQuestionsAnswered(s, task, "developer");
+      resumeTask(s, task, role, reason);
+      task.resumeState = "rework";
+      this.retire(s, task.id);
+    }
     const audit = { taskId: task.id, redBaselineHead: snapshot.head, previousSources: previous.sources,
-      newSources: snapshot.sources, rerunRed, reason, by: role.id };
+      newSources: snapshot.sources, rerunRed, reason, by: role.id, ...(resumed && { resumed, scheduleVersion: task.scheduleVersion }) };
     this.store.event("baseline.red-realigned", audit);
-    return { state: "applied", redBaselineRealigned: true, ...audit,
-      ...(rerunRed.length && { instruction: "先保留当前实现和测试，按 redBaselineHead 核对原实现快照。仅在该实现快照上运行待补红检查。" }) };
+    return { state: resumed ? task.state : "applied", taskState: task.state, redBaselineRealigned: true, ...audit,
+      ...(resumed && { resumeState: task.resumeState }),
+      ...(rerunRed.length && this.canRunDeveloperCheck(task, task.developerId) &&
+        { instruction: task.verification.checks.some(check => rerunRed.includes(check.id) && redSnapshotSpec(task, check))
+          ? "执行待补红检查。隔离模式会自动读取 redBaselineHead 的源文件和当前冻结测试。"
+          : "先保留当前实现和测试，按 redBaselineHead 核对原实现快照。仅在该实现快照上运行待补红检查。" }) };
   }
   checkPrerequisites(s, task, check, root) {
     assertFingerprintMode(task);
@@ -4227,7 +4523,7 @@ export class Workflow {
     const expected = task.redBaseline ?? task.baseline;
     verify(!task.redBaselinePending && implementationScopeMatches(task, expected), "contract-invalid",
       `${context} 取红基线覆盖范围与当前写集不一致，请用 diagnoseTask 获取原票恢复路径`);
-    if (check.stage === "red") {
+    if (check.stage === "red" && !redSnapshotSpec(task, check)) {
       const actual = implementationFingerprint(root, task);
       if (expected.sources !== actual.sources) {
         const changedFiles = expected.sourceFiles ? [...new Set([...Object.keys(expected.sourceFiles), ...Object.keys(actual.sourceFiles)])]
@@ -4246,133 +4542,16 @@ export class Workflow {
       }
     }
     if (["green", "full"].includes(check.stage))
-      need(task.verification.checks.filter((entry) => entry.stage === "red").every((entry) => this.deliveryCheck(s, task, entry)), context + " 先完成可核对的预期失败检查");
+      need(task.verification.checks.filter((entry) => entry.stage === "red").every((entry) => deliveryCheck(s, task, entry)), context + " 先完成可核对的预期失败检查");
     if (["full", "regression"].includes(check.stage))
-      need(task.verification.checks.filter((entry) => entry.stage === "green").every((entry) => this.validCheck(s, task, entry)), context + " 先完成对应的局部绿阶段");
-    if (leadCheck(check)) this.assertDeliveryProof(s, task);
-  }
-  redProof(root, task, check) {
-    return fingerprint(root, [...task.verification.testWrites, ...check.inputs.filter((file) => !overlaps([file], task.writes))],
-      [], undefined, { rawPaths: task.verification.testWrites });
-  }
-  intactOutput(job) {
-    try {
-      return job.output && createHash("sha256").update(readFileSync(job.output)).digest("hex") === job.receipt?.outputHash;
-    } catch {
-      return false;
-    }
-  }
-  checkContentMatches(job, input) {
-    if (job.input === input) return true;
-    try {
-      const old = JSON.parse(job.input), current = JSON.parse(input);
-      return Array.isArray(old) && old.length === 3 && old.every(value => typeof value === "string") &&
-        old[2] === current[2];
-    } catch { return false; }
-  }
-  invalidateCheckReceipts(s, task, checkIds) {
-    if (!checkIds.length) return;
-    for (const job of s.checkJobs)
-      if (job.taskId === task.id && job.state === "passed" && checkIds.includes(job.check.id)) job.invalidated = true;
-  }
-  checkArtifactsAvailable(s, root, job) {
-    const preparation = job.receipt?.preparation;
-    if (artifactsIntact(root, preparation)) return true;
-    if (preparation?.artifactsVerified !== true) return false;
-    // A later verified build can account for changed shared products. Keep
-    // rejecting changes with no recorded producer, including manual edits.
-    return preparation.artifacts.every(artifact => artifactsIntact(root, { artifacts: [artifact] }) ||
-      s.checkJobs.some(later => later.id !== job.id && later.root === job.root && later.finishedAt > job.finishedAt &&
-        later.state === "passed" && later.receipt?.preparation?.artifactsVerified === true &&
-        later.check.preSteps?.some(step => coversPath(step.outputs, artifact.file)) &&
-        later.receipt.preparation.artifacts.some(output => output.file === artifact.file && artifactsIntact(root, { artifacts: [output] }))));
+      need(task.verification.checks.filter((entry) => entry.stage === "green").every((entry) => validCheck(s, task, entry)), context + " 先完成对应的局部绿阶段");
+    if (leadCheck(check)) assertDeliveryProof(s, task);
   }
   validCheck(s, task, check, jobId) {
-    assertFingerprintMode(task);
-    if (task.redBaselinePending || !implementationScopeMatches(task, task.redBaseline ?? task.baseline)) return;
-    const root = find(s.projects, task.projectId).root;
-    const red = check.stage === "red";
-    const input = red ? this.redProof(root, task, check) : this.checkInput(root, task, check);
-    return s.checkJobs.findLast((job) => job.taskId === task.id && (!jobId || job.id === jobId) &&
-      job.check.id === check.id && (sameCheckRecipe(job.check, check) ||
-        task.budgetReceiptIds?.includes(job.id) && sameCheckRecipe(checkWithoutBudgets(job.check), checkWithoutBudgets(check))) &&
-      job.fingerprintEol === fingerprintEol && !job.invalidated &&
-      job.state === "passed" && !job.receipt?.environmentFailure &&
-      (red || this.checkArtifactsAvailable(s, root, job)) &&
-      (red ? (job.redProofVersion === 2
-        ? job.redProof === redEvidence(root, task, check, job.redImplementationBaseline, 2).redProof &&
-          job.redTestProof === fingerprint(root, task.verification.testWrites, [], undefined, { eol: "raw" })
-        : job.redProof === input) : this.checkContentMatches(job, input)) &&
-      (!red || this.intactOutput(job) && redReceiptValid(check, job.receipt, readFileSync(job.output, "utf8"))) &&
-      this.intactOutput(job));
-  }
-  upstreamRed(s, task, check, jobId) {
-    if (check.stage !== "red" || !task.baseline || task.redBaselinePending ||
-        !(task.redInheritedWrites ?? task.baseline.admissionOwnedDirty ?? task.ownedDirty ?? []).some(file =>
-          coversPath(task.writes, file) && !coversPath(task.verification.testWrites, file))) return;
-    const pair = task.verification.checks.find(green => green.stage === "green" && check.id === green.id + "-red" &&
-      (check.derivedFrom === green.id || task.redContractVersion !== 2 && check.derivedFrom === undefined) &&
-      JSON.stringify(green.argv) === JSON.stringify(check.argv));
-    if (!pair) return;
-    const upstreamIds = task.upstreamRedTaskId ? [task.upstreamRedTaskId] :
-      [...(task.dependencies ?? []), ...s.tasks.filter(item => item.supersededBy === task.id).map(item => item.id)];
-    if (!upstreamIds.length) return;
-    const recipe = ({ id, derivedFrom, ...fields }) => fields;
-    const root = find(s.projects, task.projectId).root;
-    const testProof = fingerprint(root, task.verification.testWrites, [], undefined, { eol: "raw" });
-    for (const upstreamId of upstreamIds) {
-      const upstream = s.tasks.find(item => item.id === upstreamId && item.projectId === task.projectId && item.verification && item.baseline);
-      if (!upstream || upstream.baseline.fingerprintEol !== fingerprintEol ||
-          JSON.stringify(scopePaths(upstream.verification.testWrites)) !== JSON.stringify(scopePaths(task.verification.testWrites)) ||
-          !(upstream.releasedScope?.writes ?? upstream.writes).length ||
-          JSON.stringify(scopePaths(upstream.releasedScope?.writes ?? upstream.writes)) !== JSON.stringify(scopePaths(task.writes)) ||
-          !check.covers.every(id => upstream.verification.acceptance.find(ac => ac.id === id)?.text ===
-            task.verification.acceptance.find(ac => ac.id === id)?.text)) continue;
-      const upstreamCheck = upstream.verification.checks.find(entry => entry.stage === "red" && sameCheckRecipe(recipe(entry), recipe(check)));
-      if (!upstreamCheck) continue;
-      const original = upstream.releasedScope?.writes ? { ...upstream, writes: upstream.releasedScope.writes } : upstream;
-      const job = this.validCheck(s, original, upstreamCheck, jobId);
-      if (job?.redTestProof === testProof && job.receipt.failureOutputSeen === true) return job;
-    }
-  }
-  deliveryCheck(s, task, check, jobId) {
-    return this.validCheck(s, task, check, jobId) ?? this.upstreamRed(s, task, check, jobId);
-  }
-  historicalCheck(s, task, check) {
-    const proof = task.deliveryVerification?.checks.find(item => item.checkId === check.id);
-    if (!proof) return;
-    const job = s.checkJobs.find(item => item.id === proof.jobId);
-    if (job && (job.taskId === task.id && sameCheckRecipe(job.check, check) ||
-        check.stage === "red" && proof.upstreamTaskId === job.taskId && job.receipt?.failureOutputSeen === true) &&
-        job.fingerprintEol === fingerprintEol &&
-        job.state === "passed" && !job.invalidated && !job.receipt?.environmentFailure &&
-        job.receipt?.outputHash === proof.outputHash && this.intactOutput(job)) return job;
-  }
-  recordDeliveryVerification(s, task, batchJob) {
-    if (!task.deliveredManifest) return;
-    try {
-      const checks = this.assertDeliveryProof(s, task, true).map(({ checkId, jobId, upstreamTaskId }) => ({
-        checkId, jobId, outputHash: find(s.checkJobs, jobId).receipt.outputHash,
-        ...(upstreamTaskId && { upstreamTaskId }),
-      }));
-      task.deliveryVerification = { reportId: task.deliveredManifest.reportId, checks,
-        ...(batchJob && { batch: { jobId: batchJob.id, outputHash: batchJob.receipt.outputHash } }) };
-    } catch (error) {
-      if (!["evidence-missing", "contract-invalid"].includes(error.verificationCode)) throw error;
-    }
+    return validCheck(s, task, check, jobId);
   }
   assertDeliveryProof(s, task, final = false, historicalCommit) {
-    verify(historicalCommit || this.hash(s, task) === task.candidate, "contract-invalid", "候选输入已变化，需重新交付");
-    const report = task.reports.findLast((item) => item.revision === task.revision && item.candidate === task.candidate);
-    const checks = [];
-    for (const check of task.verification.checks) {
-      if (leadCheck(check) && !final) continue;
-      const job = historicalCommit ? this.historicalCheck(s, task, check) : leadCheck(check) ? this.validCheck(s, task, check) :
-        report?.checks?.map(proof => proof?.jobId && this.deliveryCheck(s, task, check, proof.jobId)).find(Boolean);
-      verify(job, "evidence-missing", "交付证据缺失、失效或已变化：" + check.id);
-      checks.push(this.checkReference(check, job, task));
-    }
-    return checks;
+    return assertDeliveryProof(s, task, final, historicalCommit);
   }
   activeChecks() {
     return this.store.read().checkJobs.filter(activeCheck);
@@ -4410,12 +4589,12 @@ export class Workflow {
         verify(task.revision === job.revision && (job.scheduleVersion === undefined || job.scheduleVersion === (task.scheduleVersion ?? 0)),
           "contract-invalid", "检查责任在启动前已变化");
         const scope = this.verifyScope(s, task, s.roles.find(role => role.id === job.requester), true);
-        const input = this.checkInput(project.root, task, job.check);
+        const input = checkInput(project.root, task, job.check);
         if (leadCheck(job.check) || task.verification.browserE2E) assertCheckOwnership(project.root, job.check, task.verification.browserE2E);
         if (job.preparing) {
           this.checkResponsibility(task, job.check, activeRole(s, job.requester));
           if (job.check.stage !== "red") this.checkPrerequisites(s, task, job.check, project.root);
-          const cached = this.validCheck(s, task, job.check);
+          const cached = validCheck(s, task, job.check);
           if (cached) {
             if (leadCheck(job.check)) this.completeIndependentChecks(s, task);
             this.recordContract(s, task, false);
@@ -4428,7 +4607,11 @@ export class Workflow {
           Object.assign(job, { input, ownership: scope.ownershipMetrics });
           const notes = planningSourceNotes(project.root, task, s.plans.find((item) => item.id === task.planId));
           if (notes.length) job.sourceNotes = notes;
-          if (job.check.stage === "red") Object.assign(job, redEvidence(project.root, task, job.check, task.redBaseline?.sources));
+          if (job.check.stage === "red") {
+            Object.assign(job, redEvidence(project.root, task, job.check, task.redBaseline?.sources));
+            const snapshot = redSnapshotSpec(task, job.check);
+            if (snapshot) job.redSnapshot = snapshot;
+          }
           delete job.preparing;
         } else verify(input === job.input, "contract-invalid", "检查输入在启动前已变化");
       } catch (error) {
@@ -4446,10 +4629,10 @@ export class Workflow {
   }
   completeIndependentChecks(s, task) {
     if (task.state !== "waiting_verification" || recoveringFingerprint(task)) return;
-    if (!task.verification.checks.filter(leadCheck).every(check => this.validCheck(s, task, check))) return;
+    if (!task.verification.checks.filter(leadCheck).every(check => validCheck(s, task, check))) return;
     task.state = task.batchId ? "waiting_batch" : "ready";
     task.waitReason = null;
-    if (task.state === "ready") this.recordDeliveryVerification(s, task);
+    if (task.state === "ready") recordDeliveryVerification(s, task);
   }
   closeCheck(s, job, result) {
     this.classifyCheck(job, result);
@@ -4475,7 +4658,7 @@ export class Workflow {
     }
     Object.assign(job, result, { finishedAt: Date.now() });
     const independent = leadCheck(job.check);
-    if(!independent&&job.state==='passed'&&this.validCheck(s,task,job.check)) {
+    if(!independent&&job.state==='passed'&&validCheck(s,task,job.check)) {
       task.reworkEvidence=(task.reworkEvidence??[]).filter(checkId=>checkId!==job.check.id);
       task.reworkEvidenceDetails=(task.reworkEvidenceDetails??[]).filter(item=>item.checkId!==job.check.id);
     }
@@ -4494,7 +4677,7 @@ export class Workflow {
       receipt = { ...receipt, ...detectEnvironmentFailure(receipt, recordedOutput, receipt.startedAt ?? job.startedAt, job.check) };
       receipt = {...receipt,...checkEvidenceFacts(job.check,receipt,recordedOutput)};
       if (receipt.environmentFailure) Object.assign(receipt, { failureOutputSeen: false, classification: "environment-failed", ...environmentRetry(job) });
-      if (receipt.timedOut) receipt = { ...receipt, uncertain: true };
+    if (receipt.timedOut && !receipt.redProofDiagnostics) receipt = { ...receipt, uncertain: true };
       if (job.check.stage === "red") receipt = { ...receipt,
         redProofScope: job.redProofScope ?? job.files.filter(file => !job.check.inputs.includes(file)),
         excludedTestWrites: job.excludedTestWrites ?? [],
@@ -4524,9 +4707,9 @@ export class Workflow {
       } else {
         try {
           this.verifyScope(s, task, undefined, true);
-          verify(!receipt.stale && task.revision === job.revision && this.checkInput(job.root, task, job.check) === job.input,
+          verify(!receipt.stale && task.revision === job.revision && checkInput(job.root, task, job.check) === job.input,
             "contract-invalid", "检查期间输入已变化");
-          if (leadCheck(job.check)) this.assertDeliveryProof(s, task);
+          if (leadCheck(job.check)) assertDeliveryProof(s, task);
           if (this.passed(job, receipt, output))
             result.state = "passed";
         } catch (error) {
@@ -4543,8 +4726,8 @@ export class Workflow {
   passed(job, receipt, output) {
     return receipt.id === job.id && !receipt.environmentFailure && !receipt.signal && !receipt.timedOut && !receipt.launchError &&
       (receipt.evidenceKind!=='test'||receipt.testCaseSeen===true) &&
-      receipt.exitCode === job.check.expectedExit && receipt.expectedOutputSeen && this.intactOutput({ output, receipt }) &&
-      (job.check.stage !== "red" || redReceiptValid(job.check, receipt, readFileSync(output, "utf8")));
+      receipt.exitCode === job.check.expectedExit && receipt.expectedOutputSeen && intactOutput({ output, receipt }) &&
+      (job.check.stage !== "red" || redSnapshotValid(job, receipt) && redReceiptValid(job.check, receipt, readFileSync(output, "utf8")));
   }
   classifyCheck(job, result) {
     const receipt = result.receipt;
@@ -4556,18 +4739,28 @@ export class Workflow {
       if (job.check.stage === 'red') { result.redEvidenceValid = true; if (receipt) receipt.redEvidenceValid = true; }
       return;
     }
+    if (["red-timeout", "snapshot-unavailable", "snapshot-changed"].includes(receipt?.redProofDiagnostics?.verdict)) {
+      const verdict = receipt.redProofDiagnostics.verdict;
+      Object.assign(result, { classification: verdict, redFailureReason: verdict,
+        error: receipt.launchError ?? (verdict === "red-timeout" ? "隔离取红超时" : "隔离输入或冻结工作树证据发生变化"),
+        nextAction: { command: "checkEvidence", args: { jobId: job.id } } });
+      return;
+    }
     if (["failed", "uncertain"].includes(result.state) && result.environmentFailure) {
       Object.assign(result, { classification: "environment-failed", error: environment.reason, ...environmentRetry(job) });
       return;
     }
-    if (job.check.stage === "red" && result.state === "failed" && this.intactOutput(result) &&
+    if (job.check.stage === "red" && result.state === "failed" && intactOutput(result) &&
         !redReceiptValid(job.check, receipt, output)) {
       const evidence = { command: "checkEvidence", args: { jobId: job.id } };
       const { marker, markerSeen, assertionVerified } = redFailureObservation(job.check, output);
       let redFailureReason, error, nextAction = evidence;
       if (receipt.exitCode === 0) {
         redFailureReason = "exit-zero";
-        error = "红检查退出码 0，用例通过。请先核对取红实现是否已经包含待验证行为。";
+        const diagnostics = receipt.redProofDiagnostics;
+        error = diagnostics
+          ? `隔离基线 ${diagnostics.baselineHead} 上红检查退出码 0。核对 ${job.check.covers.join("、")} 对应断言和该提交中的行为。`
+          : "红检查退出码 0，用例通过。请先核对取红实现是否已经包含待验证行为。";
       } else if (receipt.truncated || !assertionVerified ||
           !Number.isInteger(receipt.exitCode) || receipt.exitCode < 1) {
         redFailureReason = "assertion-unverified";
@@ -4592,7 +4785,7 @@ export class Workflow {
       return;
     }
     if (result.state === "failed" && receipt?.id === job.id && !receipt.launchError && !receipt.signal &&
-      !receipt.timedOut && !receipt.truncated && Number.isInteger(receipt.exitCode) && this.intactOutput(result)) {
+      !receipt.timedOut && !receipt.truncated && Number.isInteger(receipt.exitCode) && intactOutput(result)) {
       result.error ??= `检查 ${job.check.id} 实测退出码 ${receipt.exitCode}，预期 ${job.check.expectedExit}` +
         (receipt.expectedOutputSeen ? "" : "；缺少预期输出标记");
       if (job.check.stage !== "red" && receipt.exitCode !== job.check.expectedExit &&
@@ -4618,8 +4811,8 @@ export class Workflow {
       verify((delivered ? terminalDependency.includes(task.state) : task.state === "waiting_batch") && this.hash(s, task) === task.candidate,
         "contract-invalid", "批次成员候选已变化");
       this.verifyScope(s, task);
-      this.assertDeliveryProof(s, task, true);
-      return [task.id, task.revision, task.candidate, ...this.evidenceBase(task)];
+      assertDeliveryProof(s, task, true);
+      return [task.id, task.revision, task.candidate, ...evidenceBase(task)];
     });
     return JSON.stringify([versions, fingerprint(root, this.batchFiles(s, batch), [], undefined, {
       rawPaths: batch.taskIds.flatMap(taskId => find(s.tasks, taskId).verification.testWrites),
@@ -4628,14 +4821,14 @@ export class Workflow {
   verifyBatchReceipt(s, task, historicalCommit) {
     const batch = find(s.validationBatches, task.batchId);
     const job = find(s.checkJobs, task.batchReceiptId);
-    verify(job.state === "passed" && this.intactOutput(job), "evidence-missing", "累计检查证据已失效");
-    if (historicalCommit) {
-      const proof = task.deliveryVerification?.batch;
-      verify(proof?.jobId === job.id && proof.outputHash === job.receipt.outputHash && !job.invalidated,
-        "evidence-missing", "原交付的累计检查证据已失效");
-      return;
-    }
+    verify(job.state === "passed" && intactOutput(job), "evidence-missing", "累计检查证据已失效");
+    if (historicalCommit) return this.verifyFrozenBatchReceipt(task, job);
     verify(job.input === this.batchInput(s, batch, true), "contract-invalid", "累计检查输入已变化");
+  }
+  verifyFrozenBatchReceipt(task, job) {
+    const proof = task.deliveryVerification?.batch;
+    verify(job.state === "passed" && !job.invalidated && proof?.jobId === job.id &&
+      proof.outputHash === job.receipt?.outputHash && intactOutput(job), "evidence-missing", "原交付的累计检查证据已失效");
   }
   closeBatch(s, job, result) {
     this.classifyCheck(job, result);
@@ -4648,7 +4841,7 @@ export class Workflow {
         task.state = "ready";
         task.waitReason = null;
         task.batchReceiptId = job.id;
-        this.recordDeliveryVerification(s, task, job);
+        recordDeliveryVerification(s, task, job);
       }
     }
     const receiver = controller(s, batch.projectId)?.id;
@@ -4690,17 +4883,21 @@ export class Workflow {
         .filter(
           (r) => !r.archivedAt && (!role || r.projectId === role.projectId),
         )
-        .map((member) => ({ id: member.id, name: member.name, kind: member.kind,
+        .map(member => {
+          const deliveryBlock = this.deliveryBlock(s, member);
+          return { id: member.id, name: member.name, kind: member.kind,
           label: roleLabel(member),
           enabled: member.enabled,
           connected: connected(member),
           state: member.state,
           ...pendingInputStatus(member),
+          ...(deliveryBlock && { deliveryBlock }),
           ...(member.lastInputDrop && { lastInputDrop: member.lastInputDrop }),
           seenContextRevision: member.seenContextRevision ?? null,
           wakeHealth:wakeHealth(s,member.id),
           deliveryDiagnostic: member.enabled ? this.deliveryDiagnostic(s, member) : null,
-        })),
+          };
+        }),
       requirements: s.requirements.filter(
         (r) => !role || r.projectId === role.projectId,
       ),
@@ -4727,11 +4924,24 @@ export class Workflow {
     const owner=ownerStatus(s,task);
     if (releasedTaskScope(task)) return { deliveryState: ['superseded','abandoned'].includes(task.state) ? task.state : "scope-released" };
     if (!task.developerId) return {};
-    const blocker = task.state === "accepted" ? null : bridgeToolsBlocker(s.roles.find(item => item.id === (task.assignee ?? task.developerId)));
+    const role = s.roles.find((item) => item.id === (task.assignee ?? task.developerId));
+    if (role?.archivedAt && ["queued", "assigned", "rework", "reviewing", "paused", "blocked"].includes(task.state)) {
+      const issue = { code: "member-archived", reason: "member-archived", roleId: role.id,
+        detail: `原责任成员「${role.name}」已归档，原票等待主控处理。` };
+      return { ...owner, deliveryState: "blocked", blockedBy: [issue], deliveryIssue: issue };
+    }
+    const blocker = task.state === "accepted" ? null : bridgeToolsBlocker(role);
     if (blocker) return { deliveryState: "blocked", blockedBy: [blocker], deliveryIssue: blocker };
+    const block = role && ["assigned", "rework", "reviewing", "paused"].includes(task.state) && this.deliveryBlock(s, role);
+    if (block &&
+        s.notices.some(notice => block.noticeIds.includes(notice.id) &&
+          (notice.taskId === task.id || notice.taskId == null && notice.key.startsWith("message:") && task.assignee === role.id))) {
+      const deliveryState = ["offline", "disabled", "unbound", "bridge-health-check", "jobs-unknown"].includes(block.code)
+        ? "blocked" : "blocked-busy";
+      return { ...owner, deliveryState, deliveryBlock: block, deliveryIssue: this.deliveryDiagnostic(s, role) };
+    }
     if (task.deliveredAt) return { deliveryState: "delivered", ...owner, ...(task.deliveryIssue && { deliveryIssue: task.deliveryIssue }) };
     if (task.resumePending) return { deliveryState: "pending", ...(task.deliveryIssue && { deliveryIssue: task.deliveryIssue }) };
-    const role = s.roles.find((item) => item.id === (task.assignee ?? task.developerId));
     const diagnostic = role && this.deliveryDiagnostic(s, role, task.admittedAt);
     return { deliveryState: task.state === "queued" ? "waiting-admission" : diagnostic?.reason === "retry-limit" ? "undeliverable" : task.assignee ? "pending" : "waiting-admission",
       ...(diagnostic && { deliveryIssue: diagnostic }) };
@@ -4754,8 +4964,78 @@ export class Workflow {
   scopeConflict(s, task, peer) {
     const peerRole = s.roles.find((role) => role.id === (peer.assignee ?? peer.developerId))?.kind ?? "unknown";
     const remedyFor = kind => scopeConflictRemedy(s, task, peer, kind,
-      after => validateDependencyEdit(s, task, resolveAfter(s.tasks, task, after)));
+      after => prepareDependencyEdit(s, task, after));
     return scopeConflict(task, peer, peerRole, remedyFor);
+  }
+  checkBlocksAdmission(s, task) {
+    return s.checkJobs.some(job =>
+      job.batchId && activeCheck(job) && ((job.projectId === task.projectId && overlaps(task.writes, job.files)) ||
+        task.resources.some(resource => job.check.resources.includes(resource))) ||
+      !job.batchId && ["launching", "uncertain"].includes(job.state) &&
+        task.resources.some(resource => job.check.resources?.includes(resource)));
+  }
+  dependencyProof(s, task, predecessor, now, record = () => {}) {
+    const dep = predecessor.id;
+    if (predecessor.state === "trial" && predecessor.verification && predecessor.baseline?.fingerprintEol !== fingerprintEol)
+      return false;
+    if (task.dependencyStages?.[dep] === "accepted") return predecessor.state === "accepted";
+    if (!terminalDependency.includes(predecessor.state) || verificationMode(predecessor) === "missing-contract") return false;
+    const historical = task.dependencyReceipts?.[dep] ?? recoverAdmittedDependency(task, predecessor, s.checkJobs, intactOutput);
+    if (historical) record(historical);
+    if (dependencyReceiptValid(historical, predecessor, s.checkJobs, intactOutput)) return true;
+    const scope = predecessor.verification && (predecessor.state !== "accepted" || predecessor.candidateScope === 2)
+      ? this.verifyScope(s, predecessor) : undefined;
+    const historicalCommit = scope?.drift?.historicalCommit;
+    if (predecessor.batchId) this.verifyBatchReceipt(s, predecessor, historicalCommit);
+    const proofs = predecessor.verification
+      ? assertDeliveryProof(s, predecessor, true, historicalCommit).map(proof => find(s.checkJobs, proof.jobId)) : [];
+    if (predecessor.batchReceiptId) proofs.push(find(s.checkJobs, predecessor.batchReceiptId));
+    record(dependencyReceipt(predecessor, proofs, now));
+    return true;
+  }
+  parallelAssignmentWarnings(s, tasks, now = Date.now()) {
+    const projectId = tasks[0].projectId;
+    const active = s.tasks.filter(activeScope);
+    const responsibilities = new Map(active.filter(task => task.assignee && !["queued", "paused"].includes(task.state))
+      .map(task => [task.assignee, task]));
+    const available = s.roles.filter(role => role.kind === "developer" && role.projectId === projectId &&
+      !role.archivedAt && role.pending === 0 && !role.resumeTaskAfter && dispatchAvailability(role, now) === null &&
+      !s.tasks.some(task => task.assignee === role.id && occupied(task) ||
+        task.developerId === role.id && task.state === "queued") &&
+      !s.checkJobs.some(job => job.requester === role.id && activeCheck(job)));
+    if (available.length === 0) return [];
+    const canRun = task => !active.some(peer => this.scopeConflict(s, task, peer)) && !this.checkBlocksAdmission(s, task);
+    const ready = tasks.filter(task => canRun(task) && task.dependencies.every(dep => {
+      const predecessor = s.tasks.find(item => item.id === dep);
+      if (!predecessor) return false;
+      try { return this.dependencyProof(s, task, predecessor, now); }
+      catch { return false; }
+    }));
+    const idle = new Map(available.map(role => [role.id, role]));
+    const waiting = [];
+    for (const task of ready) {
+      if (responsibilities.has(task.developerId)) waiting.push(task);
+      else if (idle.has(task.developerId) && canRun(task)) {
+        idle.delete(task.developerId);
+        responsibilities.set(task.developerId, task);
+        active.push({ ...task, state: "assigned" });
+      }
+    }
+    const warnings = [];
+    for (const task of waiting) {
+      if (task.assignmentReason || !canRun(task)) continue;
+      const developer = idle.values().next().value;
+      if (!developer) break;
+      idle.delete(developer.id);
+      active.push({ ...task, state: "assigned" });
+      const parallelWith = responsibilities.get(task.developerId);
+      const peerLabel = parallelWith.ticketKey ?? parallelWith.id;
+      warnings.push({ kind: "parallel-assignment", path: `tickets[${task.ticketKey}].developerId`,
+        ticketKey: task.ticketKey, parallelWith: peerLabel, developerId: task.developerId,
+        suggestedDeveloperId: developer.id, suggestedDeveloperName: developer.name,
+        message: `${task.ticketKey} 可与 ${peerLabel} 并行，但两票分给同一开发。建议将 ${task.ticketKey} 的 developerId 改为当前空闲的 ${developer.name}。` });
+    }
+    return warnings;
   }
   schedule(s, now = Date.now()) {
     for (const task of s.tasks) this.finishTaskStop(s, task, now);
@@ -4772,22 +5052,10 @@ export class Workflow {
             fingerprintBlocked.add(dep);
             return true;
           }
-          if (task.dependencyStages?.[dep] === "accepted") return predecessor.state !== "accepted";
-          if (verificationMode(predecessor) === "missing-contract") return true;
-          if (!terminalDependency.includes(predecessor.state)) return true;
-          const historical=task.dependencyReceipts?.[dep]??recoverAdmittedDependency(task,predecessor,s.checkJobs,job=>this.intactOutput(job));
-          if(historical)(task.dependencyReceipts??={})[dep]=historical;
-          if(dependencyReceiptValid(historical,predecessor,s.checkJobs,job=>this.intactOutput(job))) return false;
           try {
-            const scope = predecessor.verification && (predecessor.state !== "accepted" || predecessor.candidateScope === 2)
-              ? this.verifyScope(s, predecessor) : undefined;
-            const historicalCommit = scope?.drift?.historicalCommit;
-            if (predecessor.batchId) this.verifyBatchReceipt(s, predecessor, historicalCommit);
-            const proofs=predecessor.verification
-              ? this.assertDeliveryProof(s,predecessor,true,historicalCommit).map(proof=>find(s.checkJobs,proof.jobId)) : [];
-            if(predecessor.batchReceiptId)proofs.push(find(s.checkJobs,predecessor.batchReceiptId));
-            (task.dependencyReceipts??={})[dep]=dependencyReceipt(predecessor,proofs,now);
-            return false;
+            return !this.dependencyProof(s, task, predecessor, now, receipt => {
+              (task.dependencyReceipts ??= {})[dep] = receipt;
+            });
           } catch (error) {
             const failure = failures[dep] = {
               since: previousFailures[dep] && previousFailures[dep].code !== "contract-invalid" ? previousFailures[dep].since : now,
@@ -4842,11 +5110,7 @@ export class Workflow {
           reason = deliveryLabels[unavailable];
           waitKind = "member";
         }
-        if (!reason && s.checkJobs.some(job =>
-          job.batchId && activeCheck(job) && ((job.projectId === task.projectId && overlaps(task.writes, job.files)) ||
-            task.resources.some(resource => job.check.resources.includes(resource))) ||
-          !job.batchId && ["launching", "uncertain"].includes(job.state) &&
-            task.resources.some(resource => job.check.resources?.includes(resource)))) {
+        if (!reason && this.checkBlocksAdmission(s, task)) {
           reason = "等待检查作业释放输入或共享资源";
           waitKind = "resource";
         }
@@ -4899,7 +5163,7 @@ export class Workflow {
         if (!reason) {
           if (task.preflightFailure) {
             const lead = controller(s, task.projectId);
-            if (lead) this.notice(s, lead.id, `preflight-ready:${task.id}:${task.scheduleVersion ?? 0}`,
+            if (lead) this.notice(s, lead.id, `preflight-ready:${task.id}`,
               "准入阻塞已解除，原票已自动分派：" + task.title, task.id);
           }
           delete task.preflightFailure;
@@ -4920,7 +5184,7 @@ export class Workflow {
             task.id,
           );
           const lead = wasWaitingForDependency && controller(s, task.projectId);
-          if (lead) this.notice(s, lead.id, "dependency-ready:" + task.id + ":" + task.revision + ":" + (task.scheduleVersion ?? 0), "前置已满足，原票已自动分派：" + task.title, task.id);
+          if (lead) this.notice(s, lead.id, `dependency-ready:${task.id}`, "前置已满足，原票已自动分派：" + task.title, task.id);
         }
       }
       if (task.state === "waiting_review") {
@@ -4994,7 +5258,7 @@ export class Workflow {
       );
       if (role.sessionId === sessionId) return { bound: true, confirmed: true, roleId, effective: Boolean(role.enabled), reason: role.enabled ? "confirmed-and-enabled" : "disabled", deliveryBlocker: dispatchAvailability(role) };
       const previous = s.requests.find(
-        (r) => r.roleId === roleId && r.sessionId === sessionId && !r.confirmed,
+        (r) => r.roleId === roleId && r.sessionId === sessionId && !r.confirmed && !r.cancelledAt,
       );
       if (previous) return { ...previous, effective: false, reason: "awaiting-confirmation" };
       const request = { id: id(), roleId, sessionId, cwd, confirmed: false };
@@ -5169,12 +5433,16 @@ export class Workflow {
       this.schedule(s, now);
       this.normalizeNotices(s);
       for (const role of s.roles) if (providerOf(role) === provider) consolidateActiveWakes(s, role, now);
+      if (provider === "dsh") for (const role of s.roles)
+        if (isDshController(role) && !role.archivedAt && liveIds.has(role.sessionId))
+          this.finishControllerTurnDelivery(s, role, now);
       recoverLostWakes(s,now,(kind,data)=>this.store.event(kind,data),(role,wake,ageMs)=>{
         const lead=controller(s,role.projectId);
-        if (lead && wake.state === "failed") {
+        if (!lead || role.id === lead.id) return;
+        if (wake.state === "failed") {
           this.notice(s, lead.id, `wake-abandoned:${wake.id}`,
             `${role.name} 的唤醒连续 ${wake.deliveryLosses} 次未读取。可执行 rearmWake ${JSON.stringify({roleId:role.id,reason:"恢复原会话未读责任"})}，或从原会话读取 inbox。`);
-        } else if (lead) {
+        } else {
           const notice = this.notice(s, lead.id, `wake-stuck:${wake.id}:${wake.deliveryRetry}`,
             `${role.name} 的唤醒超过 ${Math.floor(ageMs / 1000)} 秒未读取，已自动安排恢复`);
           notice.wakeLossAt = wake.lostAt;
@@ -5182,7 +5450,8 @@ export class Workflow {
       }, (role, unread) => {
         const suppressed = new Set(selectWakeNotices(s, role, unread).suppressedNotices
           .filter(notice => notice.reason === "no-member-responsibility").map(notice => notice.id));
-        return unread.filter(notice => !suppressed.has(notice.id));
+        return unread.filter(notice => !suppressed.has(notice.id) &&
+          !(role.kind === "controller" && controllerPassiveNotice(notice)));
       }, role => providerOf(role) === provider && liveIds.has(role.sessionId) && role.jobs === 0 &&
         !wakeRecipientBusy(role, now) &&
         !role.pendingToolHealthCheck && dispatchAvailability(role, now, true) === null,
@@ -5210,10 +5479,7 @@ export class Workflow {
         const protectedController = isDshController(role);
         const controllerTurn = protectedController ? role.observation?.turn : null;
         const queueFingerprint = queueFingerprintForDelivery(role);
-        const blocked=role.pendingToolHealthCheck?'bridge-health-check':bridgeToolsBlocker(role)?'bridge-tools-missing':!role.enabled?'role-disabled':
-          !liveIds.has(role.sessionId)||now-role.connectedAt>=15000?'role-offline':
-          turnBlocksDelivery(role.observation)?(protectedController?'controller-turn':'role-running'):role.state!=='idle'?'role-running':
-          role.pending!==0&&!queueFingerprint?'queued-input':!Number.isSafeInteger(role.jobs)||role.jobs<0?'jobs-unknown':role.jobs>0?'background-jobs':null;
+        const blocked = this.wakeBlockReason(s, role, now);
         if (blocked) {
           blockedReasons.set(role.id, blocked);
           if (role.enabled && liveIds.has(role.sessionId) && wakeRecipientBusy(role, now)) {
@@ -5358,14 +5624,15 @@ export class Workflow {
           wake.contextRevision = contextRevision(role);
           wake.contextIncluded = provider !== "dsh" && !hasCurrentContext(role);
           const project = find(s.projects, role.projectId);
+          const summaryNotices = [...eligible, ...selection.diagnostics];
           if (provider === "dsh") {
-            wake.text = dshWakeText(project, role, dshWakeSummary(eligible, s.tasks, s.checkJobs, s.roles, s.messages));
+            wake.text = dshWakeText(project, role, dshWakeSummary(summaryNotices, s.tasks, s.checkJobs, s.roles, s.messages));
           } else {
             const taskIds=[...new Set(eligible.map(notice=>notice.taskId).filter(Boolean))].sort();
             const reportIds=taskIds.filter(taskId=>eligible.some(notice=>notice.taskId===taskId&&/^report(?:-blocked)?:/.test(notice.key)));
             const summary = [`actionable: true | notices: ${eligible.length} | actionableCount: ${eligible.filter(notice=>notice.actionable).length}`,
               ...reportIds.map(taskId=>{const task=find(s.tasks,taskId);return `${task.ticketKey??task.id.slice(0,8)} · taskId=${task.id} · candidate=${task.candidate?.slice(0,12)??'待生成'}`;}),
-              "动态详情",wakeSummary(eligible,s.tasks,s.checkJobs,s.roles),"任务索引",...taskIds.filter(taskId=>!reportIds.includes(taskId)).map(taskId=>{
+              "动态详情",wakeSummary(summaryNotices,s.tasks,s.checkJobs,s.roles),"任务索引",...taskIds.filter(taskId=>!reportIds.includes(taskId)).map(taskId=>{
                 const task=find(s.tasks,taskId);return `${task.ticketKey??task.id} · ${task.title}`;
               })].join("\n");
             wake.text = wakeText(project, role,
@@ -5377,6 +5644,19 @@ export class Workflow {
         }
       }
       for(const role of s.roles.filter(role=>providerOf(role)===provider&&!role.archivedAt)) {
+        const block = this.updateDeliveryBlock(s, role, now, blockedReasons.get(role.id) ?? null);
+        if (block?.code === "stale-turn") {
+          const lead = controller(s, role.projectId);
+          const turnKey = `${role.sessionId}:${block.turnStartedAt}`;
+          if (lead && lead.id !== role.id && role.lastReportedStaleTurn !== turnKey) {
+            role.lastReportedStaleTurn = turnKey;
+            const notice = this.notice(s, lead.id, `turn-stale:${role.id}:${block.turnStartedAt}`,
+              `${role.name} 的回合仍未结束，${block.noticeIds.length} 条通知等待投递。`);
+            notice.blockedRoleId = role.id;
+            notice.blockedTurnStartedAt = block.turnStartedAt;
+            this.store.event("turn-stale", { roleId: role.id, ...block });
+          }
+        }
         const selection=selectWakeNotices(s,role,s.notices.filter(notice=>notice.roleId===role.id&&!notice.readAt));
         auditWakeCoverage(s,role,selection,blockedReasons.get(role.id),now,(kind,data)=>this.store.event(kind,data));
       }
@@ -5476,6 +5756,7 @@ export class Workflow {
         payload.includes(n.id),
       ))
         this.recordDelivery(s, notice, wake.roleId, Date.now());
+      this.updateDeliveryBlock(s, find(s.roles, wake.roleId));
       return { state: "stored" };
     });
   }
@@ -5493,6 +5774,7 @@ ${CONTROLLER_TURN_RULE}
 参数表（args 是 JSON 对象字符串，也可直接传 JSON 对象；身份来自真实会话，不得自行填写）：
 ${writeSignatures}
 summarize 完整形状示例（用原票实际候选、全部AC与真实核对证据替换示例值）：${JSON.stringify(summarizeExample)}
+非高风险实施票在 summarize 的 decision.dimensions 逐维提交 state、note 和 checkIds，说明与开发报告的比较结果。发现不一致时填写 issues，按回执给出的 rework 退回。新高风险票在 decision.riskNote 记录对独立审查风险结论的核对。
 list {}：角色和任务短卡，已批准需求。assigned 表示已分配；deliveryState=delivered 和 deliveredAt 表示宿主已接收或成员已读取原通知。是否已启动看成员实时 state。
 唤醒健康：list/snapshot 的角色卡和任务卡含 wakeHealth={stuck,oldestStuckAgeMs,lastDeliveredAt}。enqueued 表示宿主接收，原会话读取 inbox 或确认工作后收口。忙碌期间合并新通知，保留已发内容与回执身份，等空闲再发更新。未读按 120、240、480 秒核对。第三次未读时记录 wake.abandoned，并请求 DSH 复核工具注册。投递诊断可在收件箱查阅。工具可用且心跳确认空闲时允许自动续接一次，也可由主控执行 rearmWake {roleId,reason} 或从面板恢复。未覆盖的通知会记录 wake.suppressed，含 blockingWakeId 和原因。
 inbox {}：返回本角色全部未读通知，不限于某条 wake.noticeIds；返回后写 readAt，并关闭本角色仍开放的唤醒。开发或审查成员读取本人的当前责任票，或成功执行该票的检查、进度、报告等操作时，会单独确认这条责任通知，停止为它重投；答复和消息仍可在 inbox 读取。notice.actionable 始终为布尔值；纯状态通知仍不单独唤醒主控。
@@ -5500,14 +5782,14 @@ redeliver {taskId,reason?}：主控可重投已送达但成员静默的 assigned
 context {}：当前项目目录、角色、职责和已保存的身份提示词。每次开启角色或资料更新后，inbox 也会提供一次。
 inspect {taskId,section?,offset?,limit?}：默认只回状态、验收条款、检查摘要和最近报告。完整票面显式 section:"full"；baseline.other、全量 checkJobs、reports、reviews、scheduleHistory、acceptance 显式按 section 分页，offset 非负、limit 为 1–200。默认上限190KB；返回 truncated、scanned、totalBytes 与 omitted 查询入口，完整证据保留本地。
 deliveryEvidence {taskId,candidate?,file?}：查候选可复用检查、命令、覆盖、断言标记及日志入口。file 打开交付清单中单个文件的实际差异。存在 deliveryCommit 时，差异和 historicalEvidence 对应已验证的原交付提交。索引不替代独立审查或主控短探针。
-diagnoseTask {taskId,supersedeConflict?}：核对当前门槛，返回分类、原因及后续命令。写集冲突可按依赖顺序执行，共享资源冲突等待对端释放。仅当主控已确认两个写集冲突无法调和且有有效承接票时，在承接票诊断中传 supersedeConflict:原票ID，核对承接命令和在途文件数量。inspect / diagnoseTask 提供 elapsedSinceDeliveryMs、elapsedSinceLastCheckMs（无检查时为 null）、blockedOnContractMs（从首次观察到阻塞累计）。检查准入或诊断发现新提交时，按原票及 from/to 记一条主控信息通知，随下次行动唤醒合发，不推断提交者。
+diagnoseTask {taskId,supersedeConflict?}：核对当前门槛，返回分类、原因及后续命令。写集冲突可按依赖顺序执行，共享资源冲突等待对端释放。主控确认原票无法完成且有有效承接票时，在承接票诊断中传 supersedeConflict:原票ID，核对承接命令和在途文件数量。inspect / diagnoseTask 提供 elapsedSinceDeliveryMs、elapsedSinceLastCheckMs（无检查时为 null）、blockedOnContractMs（从首次观察到阻塞累计）。检查准入或诊断发现新提交时，按原票及 from/to 记一条主控信息通知，随下次行动唤醒合发，不推断提交者。
 describeDrift {taskId}：只读核对 from/to、committedBetween（提交差异路径）和 conflicts。成员不要在冻结票在途时自行 commit；看到 baseline-drift-blocked 时保留当前文件，用 report {taskId,outcome:"blocked",summary,blocker,dimensions} 交主控处理。
 同文件部分提交仅支持已验收票与同项目已停写票之间互不重叠的普通文本 hunk。按用户 Git 授权选择已验收票的 hunk 暂存，主控执行 describeDrift {taskId,partitionPeerTaskId} 核对暂存区能否完整重建验收候选。核对通过后正常提交暂存区，再用 confirmCommit {taskId,expectedBase,expectedHead,paths,partition:{peerTaskId,proof},reason} 记账，保留对方的未暂存改动及冻结证据。proof、paths、expectedBase 从预检回执复制，expectedHead 为实际提交。
 proposeOwnedDirty {taskId,files:[{file,sha256}],reason?}：责任开发提报写集内现存未跟踪或修改文件的原始字节 SHA-256，不自动取得归属。主控在原票可调整状态下用 reviseSchedule {taskId,reason,confirmOwnedDirty:{"路径":"sha256"}} 精确确认，或 rejectOwnedDirty:true 拒绝。文件变化须重新提报。
 governance {projectId?,limit?:50}：只读扫描本项目最近最多50个提交；未 summarize 的原票写集被提交时返回 commit、ticketKey、files、at，以及 released-work-committed / in-flight-work-committed。这是范围和生命周期风险审计，不根据 Git 作者名认定提交者身份。
-rework {taskId,reason,evidence?:[checkId]}：将证据待办清单回投原票 developerId。evidence 只允许冻结的非 independent/controller 检查；成员 inbox 逐项列出检查与上次分类、原因。指定检查必须在本次返工取得新有效回执才清空；其它仍有效的检查不强制重跑。diagnoseTask.nextAction 的 ownerRole/ownerId 指定实际责任人；ownerRole=developer 时主控使用 returnToOwner 回投，不能自行运行 check 或 shell。
+rework {taskId,reason,evidence?:[checkId]}：将证据待办清单回投原票 developerId。evidence 只允许冻结的非 independent/controller 检查；成员 inbox 逐项列出检查与上次分类、原因。指定检查必须在本次返工取得新有效回执才清空；其它仍有效的检查不强制重跑。diagnoseTask.nextAction 的 ownerRole/ownerId 指定实际责任人。已暂停的开发票先恢复调度，已交付的票按诊断回投补证据，冻结开发检查由责任开发执行。
 reconcileCheck {jobId,evidence}：用户工作台或本项目主控可对账 state=uncertain 的作业。evidence 必须写明已确认旧作业退出、资源可安全复用的实际依据；标记 interrupted，保留旧回执，不当作 passed。主控回执带 reconciledBy=controller 和 reconciledById。之后责任开发成员可 yieldForSchedule，再沿正常范围释放或返工路径处理；无需主控接手开发。
-resumeTask {taskId,reason}：主控恢复会话异常的 assigned/rework/paused 原票。先在宿主恢复会话；成员仍运行、有排队输入、未知或未完作业时拒绝。保留原基线、报告、候选和检查历史，等待新空闲心跳后正常准入及重新投递。不能用该命令绕过归属或验收；原 operationId 重试只取同一回执。
+resumeTask {taskId,reason}：主控恢复原票。活动责任须确认成员静默，原票检查须先收口。已暂停的开发票可在旧回合进行时先排队，等原成员的新空闲心跳后重新准入及投递。保留原基线、报告、候选和检查历史。原 operationId 重试只取同一回执。
 scopePreview {taskId?,writes,reads?,readOnly?,contextReads?,resources?}：主控在派发或调整前查看与活动票的冲突。reads 要包含实际检查输入；列出对方原票、冲突方向及路径或资源。
 inspectPlan {planId,document?,taskId?}：指定票面相对路径可查看派发正文 text、当前摘要及差异。需要保留 BOM 时用 restoreText。diff 相对派发正文，ticketSource.status 相对当前门禁期望。已派票按冻结 AC 和检查执行。误改时从派发正文恢复，再执行 diagnoseTask；保留当前文档时，按诊断使用 reviseSchedule 的 refreshSourceDigest，以当前摘要做字节对账。需要修改 AC 或检查契约时派发后继票。
 spec 与 planned attempts 可在执行期间更新。主控在 spec 顶部维护 Version: vN，在「## 变更记录」填写日期、版本、说明、影响 AC、影响在飞票。report 和 diagnoseTask 回传版本与摘要差异。命中冻结 AC 或票号时，主控选择沿用原契约、追加票或作废重派。禁止直接编辑在飞票面。停写后用 reviseSchedule 修改调度字段，变更 AC 则使用独立的新票面。
@@ -5515,7 +5797,7 @@ schema {command:"previewPlan|dispatchPlan|supersede|releaseSchedule|insertSchedu
 cacheDiagnostics {roleId,last24h?}：只读查看本项目成员最近24小时已确认送达次数、平均 promptBytes、contextFullCount、工具修复次数和 toolsVersion；不是供应商实际缓存命中率。
 buildCache {projectId}：只读查看最近 4 条前置构建缓存（cacheKey、builtAt、产物 bytes、lastHitAt）及 hits、misses、savedMs。缓存只跳过前置步骤，检查仍执行，旧证据仍校验产物指纹；checkStatus / checkEvidence 的 receipt.preparation 记录 cached 与 savedMs。
 静默 resume（silent:true、actionable:false）按项目合并，不属于待办。无需查看 inbox 或回报「没有任务」；如无异常直接结束本轮。真实派审、开放责任和问答单独投递。
-abandonTask {taskId,reason}：主控可终止已证明停写的未投递 queued 票、无排队输入和后台作业的 paused 票，或无责任成员的 trial 票。票须无未完检查，终止会释放范围并保留全部证据及审计。
+abandonTask {taskId,reason}：主控可终止已证明停写的未投递 queued 票、无排队输入和后台作业的 paused 票，或无责任成员的 trial 票。waiting_verification 票的当前候选已交付，且新鲜宿主遥测证明交付后回合已结束、成员空闲时，也可直接终止或使用 supersede。票须无未完检查，终止会释放范围并保留全部证据及审计。有承接票时使用 supersede 转移依赖。
 收口顺序：成员交付 → 主控独立探针或高风险独立审查 → summarize → 最后按用户已有 Git 授权提交。若必须先提交：已交付候选内容完全等价时，由主控 confirmCommit {taskId,expectedBase,expectedHead,paths,reason} 显式确认；保留候选、报告、检查、当前阶段及已满足的依赖。不能证明等价时沿 diagnoseTask 的 rework→rebindCommittedWork 路径，重跑原绿、完整及适用独立检查。上述命令都不替用户执行 Git 提交、回滚或历史改写。不能仅凭 Git 作者名判断是主控还是成员提交。
 主控上下文含「当前状态」块，压缩后以该块为准，不要为确认 HEAD、在途票 taskId、检查通过数而重新逐票 inspect。
 previewPlan：同一份参数预检，不派发、不冻结。返回 state、violations（path/expected/remedy）和范围派生；无论预检通过与否都不承诺在线。支持 sources.ticketsDir 或 sources.tickets 文件数组。sources 示例：{"spec":"spec.md","tickets":"tickets.md","attempts":"attempts.md"}；票面文件的 lingflow-contract JSON 围栏可冻结必改文件、必改测试与 AC；预检和派发共同核对，未采用围栏的旧规划兼容。
@@ -5526,39 +5808,45 @@ dispatchPlan {requirementId,sources:{spec,tickets,attempts},tickets:[{key,develo
 batches:[{key,tickets:[票编号],argv,inputs,resources,covers:[{ticket,acceptance:[AC编号]}],timeoutMs?,expectedOutput?}]：不同票确需同一次累计验证且候选能同时稳定时使用。成员票先过各自门槛，然后程序跑一次累计检查，通过才共同放行。retryBatch {batchId,reason} 对账后重跑。现场冲突可用 reviseBatch {batchId,reason,groups:[同样的批次定义]} 重新分组，保留全部原验收条款及历史。
 unblock {taskId,reason}：主控按诊断沿原票预演并执行一项恢复。recovery.executable 表示在同状态副本上实际命令通过；确认提交归属的动作返回 confirmation-required，请核对后执行所列命令。
 accept {taskId,evidence}：工作台或本项目主控在 trial 票上记录实际用户试用结论；候选、审查与检查仍须有效，回执保留 acceptedBy。
+closeRound {evidence,reason,confirmDrift?,projectId?,planId?}：工作台或本项目主控在人工实测整轮后一次收口试用票。evidence 填写用户实测结论，reason 填写漂移成因。只有 confirmDrift 为 true 且原交付检查证据完整时才收口漂移票。回执逐票列出 accepted 与 skipped。planId 限定计划，省略时处理项目全部试用票。
 recordSourceAppend {taskId,file,summary}：记录冻结原文后可证明的行边界追加。已派票以冻结文档和 AC 为准，外部文档后续修改单独记审计。
 Git 对账：同分支快进若未触及冻结读写与检查输入，或可证明提交字节与已交付候选等价，会记录安全前移。候选内容变化需按新候选重新验证。已入库且干净的票外脏文件从归属基线移除并保留审计。冻结路径被暂存、切换分支或提交影响冻结输入时仍须处理。expectedBase/expectedHead 接受至少 7 位十六进制 SHA 前缀。
-rebindCommittedWork {taskId,expectedBase,expectedHead,confirmPaths,confirmRecordedBaseline?,reason}：仅主控。写集内提交默认阻断；用 diagnoseTask 核对，开发先停写交回。主控确认提交归属后可沿原票重绑。同分支快进、原写集可证明、冻结路径干净且无未完检查才允许。原票继续采用派发时的 AC 和检查。spec 与 planned attempts 的追加、改写和提交记录到来源审计，可随原票续接。诊断要求 confirmRecordedBaseline 时使用回执中的冻结来源路径及指纹。保留匹配的历史红证据，绿、完整检查及验收按新基线执行。不操作 Git 历史。
+rebindCommittedWork {taskId,expectedBase,expectedHead,confirmPaths,confirmOwnedDirty?,confirmReadPromotion?,confirmRecordedBaseline?,reason}：仅主控。先用 diagnoseTask 核对，活动票先停写交回；待重准入的 queued 或已暂停 paused 且无候选的原票可直接重绑。同分支快进、原写集（含已核准扩围）可证明、只读输入干净且无未完检查时可沿原票重绑。confirmPaths 只确认本票写集中的提交变更；写集工作树尚有在途改动时按 diagnoseTask 用 confirmOwnedDirty 精确确认路径与 SHA-256；若包含准入时在 reads 后扩入 writes 的旧扩容路径，按 diagnoseTask 用 confirmReadPromotion 精确确认。检查 inputs 中已入库的变化列入 checkInputDrift，由主控随预期 HEAD 一起核对。显式 reads 或必需产物有变化时须先核对契约。诊断要求 confirmRecordedBaseline 时使用回执中的冻结来源路径及指纹。保留匹配的历史红证据，绿、完整检查及验收按新基线执行。不操作 Git 历史。
 重绑回执给出 redBaselineRebound、redBaselineHead 和 redBaselineReason。新提交实现等价时续接红基线。需要重跑时，按回执恢复原取红实现，运行真实红，再恢复已核对实现跑绿和完整检查。主控可用 reviseSchedule {taskId,refreshBaseline:true,expectedHead,redBaselineHead,reason} 选定当前 HEAD 或其祖先作为取红依据。
-仅取红基线错位时，主控用 reviseSchedule {taskId,realignRedBaseline:true,expectedHead,redBaselineHead,reason} 单独续接。在途检查须先完成或对账。候选、已通过检查和调度版本继续保留。红检查退出码 0 时，先按 diagnoseTask 核对未实现的取红提交及用例选择。
+仅取红基线错位时，主控用 reviseSchedule {taskId,realignRedBaseline:true,expectedHead,redBaselineHead,reason} 单独续接。在途检查须先完成或对账。保留候选和检查历史。已暂停的开发票以新调度版本排队，原成员空闲后按 rework 投递。红检查退出码 0 时，先按 diagnoseTask 核对未实现的取红提交及用例选择。
+仅写测试的票自动在冻结 Git 提交的隔离副本上取红，并使用当前冻结测试。其他票可在显式 red 检查声明 redMode:"auto-revert"。隔离基线通过时，核对该提交是否已有目标行为。checkStatus、inspect 和 diagnoseTask 可查看 redProofDiagnostics。
 票外归属以当前文件 SHA-256 对账。diagnoseTask 给出候选责任票、当前状态能否确认和可用命令。开发中的票可在检查结束后由主控确认，文件字节变化后重新诊断和核对。
 refreshBaseline 按冻结的 fingerprintEol 对照工作区和提交中的实现内容。normalize 接受仅 CRLF/LF 的差异，raw 要求原始字节一致。修复失效基线后按 nextAction 重跑红检查；再次核对相同实现会保留有效的红回执。
 归属扫描默认忽略未跟踪的 .scratch/、logs/、**/dist.bak-*/；需要核对此类路径时，在票的 writes 或 sources 中显式声明。项目显式配置 ownershipIgnores 数组时整体替换默认规则，不追加；已跟踪文件不受此过滤影响。
 interveneTask {taskId,mode:"guide"|"stop",reason}：主控向当前责任开发发按票纠偏或停写指令。成员运行中在下一执行步骤收到；stop 立即阻拦新检查和旧口径交付。成员核对当前请求后执行 ackTaskIntervention {taskId,requestId,reason}。停写回执登记后，现有检查可独立收口，全部结束后自动暂停原票。
 resolveTaskIntervention {taskId,requestId,decision:"retry"|"withdraw"|"confirm-stopped",reason,evidence?}：主控重投或撤回未确认的请求，或凭实际证据确认失联成员的原会话及写入进程已停止。仍有检查时沿 diagnoseTask 对账。停写后可调整、释放原票或登记后继票。
-yieldForSchedule {taskId,reason}：责任人停写并结束本票后台检查后交回调度。有 stop 请求时可先登记停写，检查随后独立收口。reviseSchedule {taskId,reason,writes?,reads?,resources?,ownedDirty?,after?:[{taskId,stage}],refreshBaseline?}：主控调整未开工或已交回的原票。调度变更留历史，发现实际写入和原票不一致时先停写。只有核实 Git 状态和已有改动归属后才 refreshBaseline。同分支安全前移且执行范围不变时，原检查仍按输入指纹和日志复核，不必仅因 HEAD 改变而重跑。
+yieldForSchedule {taskId,reason}：责任人停写并结束本票后台检查后交回调度。已暂停时再次确认返回 noop:true。有 stop 请求时可先登记停写，检查随后独立收口。reviseSchedule {taskId,reason,writes?,reads?,resources?,ownedDirty?,after?:[{taskId,stage}],refreshBaseline?}：主控调整未开工或已交回的原票。暂停票重新排队时回执与历史记录均含 resumed:true。发现实际写入和原票不一致时先停写。只有核实 Git 状态和已有改动归属后才 refreshBaseline。同分支安全前移且执行范围不变时，原检查仍按输入指纹和日志复核，不必仅因 HEAD 改变而重跑。
 纯扩写集：正在执行或实时空闲的原责任成员可沿原票新增干净的已跟踪文件。只传 taskId、reason、writes 并保留全部旧路径；有在途检查、归属冲突或取红快照无法证明时先停写对账。实际失效的证据见 invalidatedChecks。缩窄范围或改变其他字段需按原流程停写。
-confirmForeignDirty {taskId,expectedHead,reason,confirmForeignDirty:{路径:{taskId,sha256}}}：由主控核对票外文件的当前字节。有已知责任票时填其 ID；确无活动写入责任时可填 null。原分支、冻结输入、暂存区和 SHA-256 仍按实际快照核对。
+confirmForeignDirty {taskId,expectedHead,reason,confirmForeignDirty?,confirmByOwnership?,byTask?}：主控确认票外文件。严格模式按文件填写 {taskId,sha256}，确无活动写入责任时可填 taskId:null。责任方仍在写时用 confirmByOwnership:{路径:{taskId}}，或用 byTask:{责任票ID:true} 批量确认。逐文件返回 confirmed 和 rejected，已通过的项目当次入库。核对原分支、暂存区与冻结路径。
 票外指纹清理：主控可对持有冻结基线的排队、暂停、试用或执行中票单独执行 reviseSchedule {taskId,pruneOutside:true,reason}。若满足刷新条件，可与 refreshBaseline 一起执行。prunedOutside 列出已核实收口的文件，空列表附 pruneOutsideReason。审计事件为 baseline-other-pruned。
 队列投递恢复：已开启的原绑定 DSH 会话持续空闲且无作业时，可识别的排队输入会随原票唤醒。想立即续接，执行 redeliver 返回的 unblock 参数。确认误投后，可执行 dropAction 指定的 dropPendingInput {roleId,expectedQueueFingerprint,reason}，在 list 查 lastInputDrop。
 规划版本：新 dispatchPlan 须有 Version: N 和 ## 变更记录。报告可用 specVersion 引用派发或当前版本，原票验收仍取冻结 AC。
+高风险新票在派发参数或票面 lingflow-contract 登记 riskItems:[{id,reason,impact,coveredBy:[AC编号],verifiedBy:[检查编号]}]。每项检查的 covers 至少命中对应的一条 AC。只有旧 riskReason 文本的兼容派发会产生警告，仍须逐条独立审查。已派发的旧票沿原契约推进。
 承接红证据：新票用 supersede 或 upstreamRedTaskId 关联前序票，并核对 ownedDirty。准入通知给出可核对的取红提交。派生红只有在检查配方、测试字节、验收及原日志都核实后才标记 redNotApplicable。需要重新取红时，先保留当前实现和测试，再使用取红提交的实现快照。
 试用票口径续接：主控按 diagnoseTask 的 reviseSchedule {taskId,refreshBaseline:true,reason} 沿原票续接。程序核对原口径下的候选、Git、归属和原取红实现快照，保留旧回执并标记 invalidated。开发收到 check 命令后先恢复核实过的取红实现，再重跑红、绿及候选检查并重新交付。重新汇总后由用户试用。
 insertSchedule {taskId,after:[{taskId或ticket,stage:"verified|accepted"}],reason}：仅本项目主控整体替换 queued 票前置。[] 表示无技术依赖，运行时仍核对实际冲突；不能跨项目、自指或成环。dispatchPlan 显式 after 优先于票面前置，省略时沿用票面派生。
-supersede {taskId,supersededBy,reason}：仅本项目主控。旧票须为 paused、blocked、已证明停写的未投递 queued、或无责任成员的 trial，且无未完检查。改为 superseded 后释放全部读写与资源范围，保留冻结契约、历史证据、检查回执及替代审计；等待票的原依赖转向后继票且保留 verified/accepted 门槛。有原写集在途改动时返回 handoff 和带 ownedDirty 的 dispatchPlan nextAction；承接票仍须通过真实规划和归属门禁。用 inspect 继续读取旧票。不会修改项目文件、提交、回滚或改写 Git 历史。
-releaseSchedule {taskId,reason}：主控释放已停写收尾票的调度范围，保留证据，原票不再准入。assigned 票须已记录静默且成员有新鲜 idle 心跳、无排队输入、后台作业或未完检查。reviseSchedule 调整静默票的 after/reads 时按实时状态核对，回执返回 recoveredBy 和 previousOwnerState。对暂停的实施票 reviseSchedule {taskId,writes:[],reason} 等价。有在途改动返回 handoff/ownedDirty，不修改文件；abandonTask 的停写门槛不变。
+supersede {taskId,supersededBy,reason}：仅本项目主控。停写条件见 schema。改为 superseded 后释放全部读写与资源范围，保留冻结契约、历史证据、检查回执及替代审计。等待票的原依赖转向后继票并保留 verified/accepted 门槛。有原写集在途改动时返回 handoff 和带 ownedDirty 的 dispatchPlan nextAction。承接票须通过规划和归属门禁。用 inspect 读取旧票。
+releaseSchedule {taskId,reason}：主控释放已停写收尾票的调度范围，保留证据，原票不再准入。assigned 票须已记录静默且成员有新鲜 idle 心跳、无排队输入、后台作业或未完检查。reviseSchedule 调整静默票的 after/reads 时按实时状态核对，回执返回 recoveredBy 和 previousOwnerState。对暂停的实施票 reviseSchedule {taskId,writes:[],reason} 等价。有在途改动返回 handoff/ownedDirty，文件原样保留。
 previewPlan 的 violations[].repair 给出可复制的 path/value；如果缺真实用例、AC 或路径而不能安全生成替代值，则标记 requiresInput，不把形状示例当成可执行检查。
 后台检查以已授权原票冻结的 argv 为准。责任角色按 checkId 提交后由后台运行，已登记的累计检查达到条件时自动排队。检查在项目根目录运行；测试数据用 LINGFLOW_TEST_DATA_ROOT。
 技术依赖用 after.stage=verified。只有用户明确要求逐票试用确认后才能继续时才选 accepted；后续票已登记时，主控核对原约定后可用 reviseSchedule 调整原票依赖。
-registerChecks {taskId,checks,browserE2E?,resources?}：仅已准入的责任开发可为 developerChecksPending 原票登记检查。保持原实现，在批准的读写范围和资源内登记红绿、full 与适用回归。修订时先停写，由主控 reviseSchedule {taskId,allowCheckRevision:true,reason} 授权，再由责任开发传 replace:true、reason 和完整的开发检查配方。变更红配方须回到原取红状态。完成后按回执恢复，原验收与主控探针保留。
+registerChecks {taskId,checks,browserE2E?,resources?,replace?,reason?}：仅已准入的责任开发可为 developerChecksPending 原票登记检查。保持原实现，在批准的读写范围和资源内登记红绿、full 与适用回归。修订时先停写。主控 reviseSchedule {taskId,allowCheckRevision:true,reason} 授权后，LingFlow 自动通知责任开发。开发在 paused 状态提交 replace:true、reason 和完整的开发检查配方。登记后按回执恢复原票。resumeTask 会撤销未消费的授权。变更红配方须回到原取红状态。已有可重绑的收口提交时，先登记检查修订，再由主控按回执重绑基线。原验收与主控探针保留。
 check {taskId,checkId,async?}：责任开发提交红、绿或完整检查；主控提交独立验收或冻结的短探针。async:true 先返回作业号，归属和检查在后台完成。checkStatus {jobId} 查看结果；reused 时沿 reusedJobId 读取有效作业。票内 E2E 由开发承担，累计验证由程序后台跑。checkStatus {taskId} 默认看本票紧凑作业摘要，receipt含exitCode/failureOutputSeen/testCountSeen/environmentFailure/elapsedMs；完整作业传 detail:"full"，可配 limit/offset；checkEvidence {jobId} 读取日志。结果不明用原 operationId 对账。
+验收短探针应优先核对 AC 写明的可观察结果。只有 AC 明文要求的内部标识才应作为源码断言。确认探针自身有误时，主控从 diagnoseTask 取得 reviseSchedule 的 reviseLeadCheck 参数，补充 reason 与 replacement 后提交。使用原编号重跑该探针，沿用同一候选和已有开发证据。原审查已通过时沿用审查结论。已有契约异议时，由原审查者用 review {recheckCandidate:true,...} 核对同一候选并记录结论。
 等待分段：inspect、diagnoseTask 和工作台票详情展示 waitTimings。dependencyMs、resourceMs、memberMs 只累计队列中程序实际观察到的主阻塞，资源段包括文件范围冲突。checkQueueMs 累计每个作业提交至启动或未启动即结束的时间，并行作业的等待可重叠。trackedSince 为 null 表示没有排队采样，不回填旧票历史。
 红阶段只比较 writes 排除 testWrites 后的实现文件，按冻结的 fingerprintEol 逐字节一致：LINGFLOW_FINGERPRINT_EOL 默认 normalize（只把 CRLF 转 LF），raw 则比较原始字节。testWrites 可以先改来取红，但红到绿、候选和检查都按测试文件原始字节核对。无 .gitattributes 时工作树行尾受 core.autocrlf 影响，LingFlow 不读取它来决定口径。旧票或切换口径时先停写，由主控核对原实现和归属，再 reviseSchedule {refreshBaseline:true}；不自动重算。
 冻结检查可声明 requiredArtifacts:["apps/web/dist"] 和 preSteps:[{argv:["npm","run","build"],outputs:["apps/web/dist"],timeoutMs:120000}]。明确构建配置与源码 inputs，outputs 不得覆盖 writes/inputs；主控探针不做构建。缺产物明确报 evidence-missing，前置失败不算红，构建与检查共享总时限，回执保留步骤日志及产物 hash。
 preSteps 总预算预检：有 preSteps 且 timeoutMs<300000 时 warning 提醒“构建前置可能占满预算”。前置步骤超时，或总超时且 preparation.elapsedMs>=timeoutMs*0.8 时，分类为 preparation-timeout。checkStatus 显示实测耗时、冻结预算、差额和建议值。有等价检查历史可复用且原责任可续接时，diagnoseTask 优先给主控 reviseSchedule {allowCheckRevision:true,preparationJobId}，由原开发按回执执行 registerChecks。需要承接票时，提案须核对可用开发、原票交回和真实对账，并经 previewPlan。主控探针仍限60000ms。
 report {taskId,summary,dimensions,outcome?,blocker?,request?,artifacts?,openItems?:[{text,blocking,trigger?,impact?,evidence?}]}：交付受阻时用 outcome=blocked，summary 写已完成工作与自测，blocker 写具体原因和被拒回执（如有），request 写需主控做的事。程序保存成员申报与当前诊断，但不受理候选、不放行下游；修复后沿原票另用新操作 ID 正式交付。成功交付可登记非阻塞待取舍项。实施票由程序收集检查回执和当前候选的写入清单。dimensions 的 requirements、implementation、system 各填 {state,evidence,checkIds:[检查编号]}。pass 必须引用同票有效且通过的非 red 检查，并解释它如何支持结论。问题或未验证用 issues/unverified。新只读票提供 dimensions（如某维度无法验证，注明 unverified 和原因）及 checks:[{command,exitCode:0,evidence}]，无需程序 checkIds。无冻结契约的旧票保留原报告，不补造三维或原生证据。
 review {taskId,candidate,verdict:"pass|changes",findings,dimensions,testReview?,classification?,request?,artifacts?,openItems?:[{text,blocking,trigger?,impact?,evidence?}]}：仅被派审成员。通过时引用同候选程序证据。交付 manifest.testChanges 非空时，testReview 说明为何既有测试改动没有降低覆盖，或用 changes 报出反例。changes 可标 contract-invalid（契约需对账）、evidence-missing（证据待补）、quality-failed（有可复现的质量反例）；不确定时用 evidence-missing。report/review 均确认 state=stored。
-message {roleId?,text,replyTo?}：主控用 roleId 向本项目成员发直达消息；用 replyTo 引用本人收到的消息或能核实发件角色的通知。监管发新消息给本项目通知负责人，主控沿原监管消息回复。inbox 回投新消息，messages {messageId?} 查询本人频道。stored 表示已入库；派工、恢复和阻塞答复分别用原任务命令。
+新高风险票 review pass 须提交 riskAssessment:[{id,verdict:"covered",evidence,checkIds?}] 覆盖每条冻结风险。未覆盖或无法验证时提交 changes，对应条目标记 not_covered 或 unverifiable，并说明证据缺口。
+message {roleId?,text,replyTo?}：主控用 roleId 向本项目成员发直达消息。replyTo 引用本人收到且能核实发件角色的消息或通知。messages {messageId} 查询原消息的当前投递状态。queued 为待投递，blocked 附受阻原因，handed-off 为宿主接收，read 为原会话已读取收件箱。停写用 interveneTask，确认停写收口以原票干预状态 stopped 为准。
+list 和 inspect 的 deliveryBlock 显示投递原因、等待时长和未投递通知。execution.staleTurnMs 默认 25000 毫秒。业务通知等待超过阈值且目标回合仍开放时向主控提示，同回合只提示一次。忙碌期间保留原回合及通知。answer 的 resume 返回是否尝试恢复、票的当前阶段及跳过原因。
 question {taskId,text,blocking?}：默认普通提问；blocking:true 只拦提问者自己的开发交付或审查通过。answer {taskId,questionId,text,resume?}：主控或提问者答复；主控答复最后一条开发阻塞后，若暂停票通过预演且成员可恢复，默认重投原责任。
 progress {taskId,text}：责任成员静默更新。
 rework {taskId,reason,adjustScope?,evidence?}：主控安排原票返工。只暂停时保留同内容候选和报告；明确指定失效证据或候选变更时重新取证。符合纯扩写集条件时直接用 reviseSchedule。其他范围调整可传 adjustScope=true 先停在原票，再用 reviseSchedule 修订并重新准入。summarize {taskId,instructions,decision:{candidate,acceptance:[{id,evidence,checkIds}],limits,testReview?}}：实施票由主控逐条引用覆盖对应 AC 的有效检查。免审票改动既有测试时由主控填写 testReview。提供真实启动方式和试用步骤。

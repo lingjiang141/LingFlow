@@ -3,6 +3,10 @@ import { browserStageRules } from "./verification-policy.mjs";
 export const checkShape = {
   id: "focused", stage: "green", argv: ["node", "verify.cjs"], inputs: ["test/example.test.cjs"], covers: ["AC-1"],
 };
+export const riskItemShape = {
+  id: "RISK-1", reason: "修改共享权限入口", impact: "有权限之外的访问可能被放行",
+  coveredBy: ["AC-1"], verifiedBy: ["full"],
+};
 export const planSchema = {
   required: ["requirementId", "sources", "tickets"],
   requirementId: "requirement ID created by approve",
@@ -11,15 +15,16 @@ export const planSchema = {
   tickets: [{
     required: ["key", "developerId"],
     key: "R35-01", developerId: "assigned developer ID",
+    assignmentReason: "可选，说明有空闲开发时仍保留集中分配的原因",
     title: "from-ticket or explicit title", description: "from-ticket or explicit instructions",
     brief: "optional objective", boundaries: "optional constraints", stopConditions: "optional stop conditions",
-    risk: "low | medium | high", riskReason: "optional reason", readOnly: false, developerChecks: false,
+    risk: "low | medium | high", riskItems: [riskItemShape], riskReason: "optional legacy reason", readOnly: false, developerChecks: false,
     writes: "from-ticket | string[]", reads: "from-ticket | string[]", contextReads: [],
     resources: [], ownedDirty: [], after: [{ ticket: "R35-00", stage: "verified | accepted" }],
     verification: {
       acceptance: [{ id: "AC-1", text: "Observable criterion" }], testWrites: ["test/example.test.cjs"],
       browserE2E: [{ file: "e2e/example.spec.ts", title: "literal title", reason: "why a real browser is needed", covers: ["AC-1"] }],
-      checks: [{ ...checkShape, timeoutMs: 15000, expectedExit: 0, expectedOutput: "optional success marker",
+      checks: [{ ...checkShape, timeoutMs: 15000, expectedExit: 0, expectedOutput: "optional success marker", redMode: "红检查可选 auto-revert",
         failureOutput: "optional assertion marker", deriveRed: false, redExpectedExit: 1, redExpectedOutput: "optional real red marker" }],
     },
   }],
