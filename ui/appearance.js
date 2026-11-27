@@ -10,6 +10,7 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 
 export const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
 export const DEFAULT_OPACITY = 100;
+export const DEFAULT_GLASS = { blur: 10, transparency: 55 };
 
 export const PREF = { theme: THEME_KEY, cards: CARDS_KEY };
 
@@ -38,6 +39,30 @@ export const THEMES = [
     name: "淡蓝色主题",
     hint: "清透 · 安静",
     colors: ["#e9f3fc", "#fbfdff", "#3f8fd4"],
+  },
+  {
+    id: "mint",
+    name: "薄荷色主题",
+    hint: "夏日 · 清凉薄荷",
+    colors: ["#e7fbf6", "#18b98f", "#23a8eb"],
+  },
+  {
+    id: "sugar",
+    name: "砂糖色主题",
+    hint: "梦幻 · 粉蓝渐变",
+    colors: ["#fdecf4", "#f07eb1", "#68b7ff"],
+  },
+  {
+    id: "crimson",
+    name: "血色主题",
+    hint: "暗夜 · 黑红金韵",
+    colors: ["#0e090b", "#d92b43", "#e5b85b"],
+  },
+  {
+    id: "citrus",
+    name: "柑橘色主题",
+    hint: "暖阳 · 橙白棕调",
+    colors: ["#fff8ef", "#f47c20", "#8b4b1e"],
   },
 ];
 
@@ -92,6 +117,14 @@ export function writePref(key, value) {
 export function normalizeColor(value) {
   const text = String(value ?? "").trim();
   return HEX_COLOR.test(text) ? text.toLowerCase() : "";
+}
+
+export function normalizeGlass(value) {
+  if (!value || typeof value !== "object") return { ...DEFAULT_GLASS };
+  return {
+    blur: clamp(numeric(value.blur, DEFAULT_GLASS.blur), 0, 24),
+    transparency: clamp(numeric(value.transparency, DEFAULT_GLASS.transparency), 0, 90),
+  };
 }
 
 // image: { url, x, y, opacity }，x/y 为 0-100 的定位百分比，opacity 为 0-100 的不透明度。
@@ -281,28 +314,30 @@ function iconButton(className, icon, label) {
   return button;
 }
 
-function rangeRow(labelText, value) {
+function rangeRow(labelText, value, { min = 0, max = 100, unit = "%" } = {}) {
   const row = element("div", "appearance-range");
   const label = element("label", "appearance-range-label", labelText);
   const input = element("input");
   input.type = "range";
-  input.min = "0";
-  input.max = "100";
+  input.min = String(min);
+  input.max = String(max);
   input.step = "1";
   input.value = String(Math.round(value));
-  const output = element("output", "appearance-range-value", Math.round(value) + "%");
+  const output = element("output", "appearance-range-value", Math.round(value) + unit);
   label.append(output);
   row.append(label, input);
-  return { row, input, output };
+  return { row, input, output, unit };
 }
 
 export function openAppearanceDialog(spec = {}) {
   document.getElementById("appearance-dialog")?.remove();
 
+  const glassEnabled = Boolean(spec.glass);
   const state = {
     theme: typeof spec.theme === "string" ? spec.theme : "",
     image: normalizeImage(spec.image),
     color: normalizeColor(spec.color),
+    glass: glassEnabled ? normalizeGlass(spec.glass) : null,
   };
   let colorEnabled = Boolean(spec.color !== undefined && spec.color !== null);
 
@@ -398,6 +433,14 @@ export function openAppearanceDialog(spec = {}) {
   const opacity = rangeRow("不透明度", state.image?.opacity ?? initialOpacity);
   sliders.append(horizontal.row, vertical.row, opacity.row);
 
+  let panelBlur = null;
+  let capsuleTransparency = null;
+  if (glassEnabled) {
+    panelBlur = rangeRow("大框磨砂度", state.glass.blur, { min: 0, max: 24, unit: "px" });
+    capsuleTransparency = rangeRow("文字胶囊通透度", state.glass.transparency, { min: 0, max: 90, unit: "%" });
+    sliders.append(panelBlur.row, capsuleTransparency.row);
+  }
+
   let colorInput = null;
   if (colorEnabled) {
     const colorRow = element("div", "appearance-color-row");
@@ -457,6 +500,7 @@ export function openAppearanceDialog(spec = {}) {
       theme: state.theme,
       image: state.image ? { ...state.image } : null,
       color: colorEnabled ? state.color : undefined,
+      glass: glassEnabled ? { ...state.glass } : undefined,
     };
   }
 
@@ -491,6 +535,12 @@ export function openAppearanceDialog(spec = {}) {
       horizontal.output.textContent = Math.round(state.image.x) + "%";
       vertical.output.textContent = Math.round(state.image.y) + "%";
       opacity.output.textContent = Math.round(state.image.opacity) + "%";
+    }
+    if (glassEnabled) {
+      panelBlur.input.value = String(Math.round(state.glass.blur));
+      panelBlur.output.textContent = Math.round(state.glass.blur) + "px";
+      capsuleTransparency.input.value = String(Math.round(state.glass.transparency));
+      capsuleTransparency.output.textContent = Math.round(state.glass.transparency) + "%";
     }
     clearButton.disabled = !state.image;
     dialog.dispatchEvent(new Event("appearance-sync"));
@@ -585,6 +635,19 @@ export function openAppearanceDialog(spec = {}) {
     });
   }
 
+  if (glassEnabled) {
+    for (const [row, key] of [
+      [panelBlur, "blur"],
+      [capsuleTransparency, "transparency"],
+    ]) {
+      row.input.addEventListener("input", () => {
+        state.glass[key] = Number(row.input.value);
+        row.output.textContent = row.input.value + row.unit;
+        notify("glass");
+      });
+    }
+  }
+
   importButton.addEventListener("click", () => {
     clearError();
     fileInput.click();
@@ -619,6 +682,7 @@ export function openAppearanceDialog(spec = {}) {
     state.theme = typeof next.theme === "string" ? next.theme : state.theme;
     state.image = normalizeImage(next.image);
     if (colorEnabled) state.color = normalizeColor(next.color);
+    if (glassEnabled) state.glass = normalizeGlass(next.glass);
     syncPresets();
     notify("reset");
     renderGallery();

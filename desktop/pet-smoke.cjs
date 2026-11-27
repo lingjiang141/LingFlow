@@ -109,6 +109,13 @@ app.whenReady().then(async () => {
   await until(`document.querySelectorAll('.ticket').length === ${states.length}`);
   result.specCycleIncludesAdditions = true;
   await capture("spec-cycle-all-revisions");
+  for (const theme of ["white", "lavender", "sky", "mint", "sugar", "crimson", "citrus", "dark"]) {
+    await main.webContents.executeJavaScript(`window.lingflowDesktop.setTheme(${JSON.stringify(theme)})`);
+    await until(`document.documentElement.dataset.theme === ${JSON.stringify(theme)}`);
+    await wait(280);
+    await capture("overview-" + theme);
+  }
+  result.themesSynced = ["white", "lavender", "sky", "mint", "sugar", "crimson", "citrus", "dark"];
   main.showInactive();
   await wait(500);
   assert.equal(await evaluate("document.getElementById('sprite').dataset.animation"), "写代码", "Blur must not close viewing mode");

@@ -55,18 +55,27 @@ test("an orphan outside file can be acknowledged by exact bytes without claiming
   assert.equal(task(f).state, "assigned");
 });
 
-test("when no prior red snapshot can be projected, diagnose offers current HEAD for human verification", async t => {
+test("when no prior red snapshot can be projected, diagnose requires a controller-selected commit", async t => {
   const f = await fixture(t);
   const head = gitState(f.root).head;
   set(f, { redBaselinePending: true, redBaseline: { head: "0".repeat(40), writes: ["other.cjs"], sources: "unknown" } });
   const finding = diagnose(f);
   assert.equal(finding.classification, "red-baseline-unverified");
-  assert.equal(finding.nextAction?.command, "reviseSchedule");
-  assert.equal(finding.nextAction.args.redBaselineHead, head);
-  assert.deepEqual(finding.actionRequired.requiredParameters, ["reason"]);
-  const recovery = revise(f, finding.nextAction.args);
+  assert.equal(finding.nextAction?.command, "describeDrift");
+  const action = finding.actionRequired;
+  assert.equal(action.command, "reviseSchedule");
+  assert.equal(action.args.expectedHead, head);
+  assert.equal(action.args.redBaselineHead, undefined);
+  assert.equal(action.args.reason, undefined);
+  assert.deepEqual(action.requiredParameters, ["redBaselineHead", "reason"]);
+  assert.deepEqual(action.candidateHeads, { currentHead: head, admissionHead: head });
+  assert.throws(() => revise(f, action.args), /redBaselineHead/);
+  const unblock = f.call("Lead", "unblock", { taskId: f.taskId, reason: "核对取红基线" });
+  assert.equal(unblock.state, "blocked");
+  assert.deepEqual(unblock.nextAction, action);
+  const recovery = revise(f, { ...action.args, redBaselineHead: head });
   assert.deepEqual(recovery.rerunRed, ["red"]);
   set(f, { state: "accepted" });
-  assert.throws(() => revise(f, finding.nextAction.args), error =>
+  assert.throws(() => revise(f, { ...action.args, redBaselineHead: head }), error =>
     error.blockers?.some(blocker => blocker.code === "red-baseline-state"));
 });

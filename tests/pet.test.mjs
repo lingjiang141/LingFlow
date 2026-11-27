@@ -86,14 +86,40 @@ test("pet stays reachable at display edges and after a monitor disappears", () =
   assert.deepEqual(fitBounds({ x: 10000, y: 10000, width: 760, height: 640 }, { x: 0, y: 0, width: 640, height: 480 }), { x: 0, y: 0, width: 640, height: 480 });
 });
 
-test("every enabled character has verified bundled idle and coding assets", async () => {
+test("every enabled character has verified offline and normalized assets", async () => {
   const assets = createPetAssets(".validation/pet-cache-test");
   assert.deepEqual(assets.catalog.characters.map(character => character.id), ["dsh", "claude", "gpt", "gemini", "grok"]);
-  assert.equal(assets.catalog.characters.reduce((count, character) => count + character.animations.length, 0), 565);
-  for (const character of assets.catalog.characters) for (const id of [character.coding, character.idle]) {
-    const result = await assets.image(character.id, id);
-    assert.equal(result.bytes.length, result.animation.size);
-    assert.ok(result.animation.frameCount > 0 && result.animation.fps > 0);
+  assert.equal(assets.catalog.characters.reduce((count, character) => count + character.animations.length, 0), 539);
+  for (const character of assets.catalog.characters) {
+    assert.ok(character.referenceHeight > 0);
+    for (const anim of character.animations) {
+      const result = await assets.image(character.id, anim.id);
+      assert.equal(result.bytes.length, result.animation.size);
+      assert.ok(result.animation.frameCount > 0 && result.animation.fps > 0);
+    }
   }
   await assert.rejects(assets.image("../", "unknown"), /未知/);
+});
+
+test("pet counts dispatched progress separately and places planned tickets into waiting", () => {
+  const tasks = [
+    { id: "1", projectId: "p", ticketKey: "R35-01", state: "accepted", title: "已验收票", sources: { spec: { file: "spec.md", digest: "v1" } } },
+    { id: "2", projectId: "p", ticketKey: "R35-02", state: "assigned", title: "开发中票", sources: { spec: { file: "spec.md", digest: "v1" } } },
+  ];
+  const plannedTickets = [
+    { key: "R35-03", projectId: "p", requirementId: "req1", title: "待派发规划票", risk: "medium", dependsOn: ["R35-02"], specSource: { file: "spec.md", digest: "v1" }, requirementClosed: false },
+    { key: "R35-04", projectId: "p", requirementId: "req2", title: "遗留收口规划票", risk: "low", dependsOn: [], specSource: { file: "spec.md", digest: "v1" }, requirementClosed: true },
+  ];
+  const view = petProgress({ projects: [{ id: "p", name: "项目" }], tasks, plannedTickets }, { projectId: "p", specKey: "current" });
+  assert.equal(view.total, 2);
+  assert.equal(view.completed, 1);
+  assert.equal(view.accepted, 1);
+  assert.equal(view.percent, 50);
+  assert.equal(view.plannedCount, 2);
+  const waiting = view.groups.find(g => g.id === "waiting").tickets;
+  assert.equal(waiting.length, 2);
+  assert.deepEqual(waiting.map(t => [t.key, t.state, t.label, t.planned]), [
+    ["R35-03", "planned", "已规划 · 待派发", true],
+    ["R35-04", "planned", "该需求已收口 · 未派发", true],
+  ]);
 });

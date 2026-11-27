@@ -1,8 +1,10 @@
 // 窗口外观：左上角 Logo 下方的主题切换按钮、四套预设主题与自定义窗口背景图。
 import {
+  DEFAULT_GLASS,
   DEFAULT_OPACITY,
   PREF,
   THEMES,
+  normalizeGlass,
   normalizeImage,
   openAppearanceDialog,
   paintImage,
@@ -16,6 +18,7 @@ const THEME_IDS = new Set(THEMES.map((theme) => theme.id));
 
 let theme = DEFAULT_THEME;
 let wallpaper = null;
+let glass = { ...DEFAULT_GLASS };
 let syncButton = () => {};
 
 function describe(themeId) {
@@ -25,6 +28,7 @@ function describe(themeId) {
 function applyTheme(themeId) {
   theme = THEME_IDS.has(themeId) ? themeId : DEFAULT_THEME;
   document.documentElement.dataset.theme = theme;
+  window.lingflowDesktop?.setTheme?.(theme);
 }
 
 function applyWallpaper(image) {
@@ -34,8 +38,20 @@ function applyWallpaper(image) {
   document.documentElement.dataset.wallpaper = wallpaper ? "1" : "0";
 }
 
+function applyGlass(value) {
+  glass = normalizeGlass(value);
+  const rootStyle = document.documentElement.style;
+  const capsuleAlpha = Math.max(8, Math.round(100 - glass.transparency));
+  const panelAlpha = Math.max(4, Math.round(capsuleAlpha * 0.45));
+  const scrimOpacity = (capsuleAlpha * 0.0045).toFixed(2);
+  rootStyle.setProperty("--lf-glass-blur", glass.blur + "px");
+  rootStyle.setProperty("--lf-capsule-alpha", capsuleAlpha + "%");
+  rootStyle.setProperty("--lf-panel-alpha", panelAlpha + "%");
+  rootStyle.setProperty("--lf-scrim-opacity", scrimOpacity);
+}
+
 function save() {
-  writePref(PREF.theme, { theme, wallpaper });
+  writePref(PREF.theme, { theme, wallpaper, glass });
 }
 
 function load() {
@@ -43,6 +59,7 @@ function load() {
   return {
     theme: THEME_IDS.has(value?.theme) ? value.theme : DEFAULT_THEME,
     wallpaper: normalizeImage(value?.wallpaper),
+    glass: normalizeGlass(value?.glass),
   };
 }
 
@@ -50,17 +67,19 @@ function openEditor() {
   openAppearanceDialog({
     title: "窗口外观",
     description:
-      "选择一套预设主题，或导入图片作为整个窗口的背景。图片会复制保存到项目目录，之后可以随时切回已导入的图片。",
+      "选择一套预设主题，或导入图片作为整个窗口的背景。支持自由调节大框磨砂度与文字胶囊通透度。",
     theme,
     image: wallpaper,
+    glass,
     onChange(next) {
       applyTheme(next.theme);
       applyWallpaper(next.image);
+      if (next.glass) applyGlass(next.glass);
       save();
       syncButton();
     },
     onReset() {},
-    resetState: { theme: DEFAULT_THEME, image: null },
+    resetState: { theme: DEFAULT_THEME, image: null, glass: { ...DEFAULT_GLASS } },
   });
 }
 
@@ -123,9 +142,16 @@ export function setWallpaper(value) {
   return wallpaper ? { ...wallpaper } : null;
 }
 
+export function setGlass(value) {
+  applyGlass(value);
+  save();
+  return { ...glass };
+}
+
 const preference = load();
 applyTheme(preference.theme);
 applyWallpaper(preference.wallpaper);
+applyGlass(preference.glass);
 
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", mountButton, { once: true });
@@ -141,9 +167,13 @@ window.__lingflowAppearance = {
   get wallpaper() {
     return wallpaper ? { ...wallpaper } : null;
   },
+  get glass() {
+    return { ...glass };
+  },
   defaultOpacity: DEFAULT_OPACITY,
   themes: THEMES.map((item) => item.id),
   setTheme,
   setWallpaper,
+  setGlass,
   open: openEditor,
 };

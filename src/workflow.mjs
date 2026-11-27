@@ -1,7 +1,31 @@
 import { createHash, randomUUID } from "node:crypto";
 import { admissionNoticeKind, controllerPassiveNotice, currentCheckRevisionNotice, inspectedEntities, selectWakeNotices, inspectionMetadata, inspectionCommands, roleHasOpenResponsibility, isSilentNotice, resumeText, silentResumeText } from "./controller-notices.mjs";
 import { operationIdIssue, commandSignature, writeSignatures, summarizeExample, testReviewEvidence } from "./compliance-errors.mjs";
-import { dispatchPlan, dispatchReadOnlyTask, materializePlan, prepareDependencyEdit, previewPlan, readsFor, retainDependencyReceipts, verificationMode } from "./dispatch-plan.mjs";
+import { dispatchPlan, dispatchReadOnlyTask, materializePlan, planIntake, prepareDependencyEdit, previewPlan, readsFor, retainDependencyReceipts, verificationMode } from "./dispatch-plan.mjs";
+
+const terminalRequirementStates = new Set(["accepted", "abandoned", "superseded"]);
+function plannedTicketsView(s, projectId = null) {
+  const byReq = new Map();
+  for (const task of s.tasks) {
+    if (projectId && task.projectId !== projectId) continue;
+    let entries = byReq.get(task.requirementId);
+    if (!entries) {
+      entries = [];
+      byReq.set(task.requirementId, entries);
+    }
+    entries.push(task);
+  }
+  return (s.plannedTickets ?? [])
+    .filter((item) => !projectId || item.projectId === projectId)
+    .map((item) => {
+      const linked = byReq.get(item.requirementId) ?? [];
+      return {
+        ...item,
+        digestShort: item.digest.slice(0, 8),
+        requirementClosed: linked.length > 0 && linked.every((task) => terminalRequirementStates.has(task.state)),
+      };
+    });
+}
 import { checkStatusResponse } from "./check-status-response.mjs";
 import { proveCommitPartition } from "./commit-partition.mjs";
 import { checkEvidenceFacts } from "./check-evidence.mjs";
@@ -402,6 +426,7 @@ export class Workflow {
       s.checkJobs ??= [];
       s.validationBatches ??= [];
       s.plans ??= [];
+      s.plannedTickets ??= [];
       s.messages ??= [];
       reconcileRoleDuplicates(s);
       for (const task of s.tasks) {
@@ -701,6 +726,7 @@ export class Workflow {
     const { plans, projects, controllerReads, promptAdmissions, toolsRepairHistory, roleIdentityConflicts, ...workbench } = s;
     return {
       ...workbench,
+      plannedTickets: plannedTicketsView(s),
       tasks: s.tasks.map(task => ({ ...task, ...this.taskDelivery(s, task), waitTimings: waitTimings(task, checkWait.get(task.id) ?? 0, now) })),
       projects: projects.map(({ checkPolicy, allowedChecks, proposedChecks, ...project }) => project),
       controllerPolicyDefault: CONTROLLER_POLICY,
@@ -1000,6 +1026,7 @@ export class Workflow {
         check: planSchema.tickets[0].verification.checks[0],
         preconditions: ["原票选择 developerChecks:true 且已准入", "保持原实现基线", "冻结 AC、testWrites、主控探针和已批准范围保持有效"] };
       if (Object.hasOwn(taskScopeSchemas, name)) return { ...signature, ...taskScopeSchemas[name] };
+      if (name === "planIntake") return { ...signature, sources: planSchema.sources, optional: ["tickets", "remove"] };
       if (["previewPlan","dispatchPlan"].includes(name)) return { ...signature, ...planSchema };
       return signature;
     }
@@ -1218,6 +1245,7 @@ export class Workflow {
           s.checkJobs = s.checkJobs.filter((job) => job.projectId !== project.id);
           s.validationBatches = s.validationBatches.filter((batch) => batch.projectId !== project.id);
           s.plans = s.plans.filter((plan) => plan.projectId !== project.id);
+          s.plannedTickets = (s.plannedTickets ?? []).filter((item) => item.projectId !== project.id);
           s.messages = s.messages.filter((item) => item.projectId !== project.id);
           result = { deleted: true };
           break;
@@ -1544,6 +1572,25 @@ export class Workflow {
           result = { enabled: target.enabled };
           break;
         }
+        case "planIntake":
+          need(currentRole?.kind === "controller", "请在本项目已开启的 DSH 主控会话执行");
+          try {
+            result = planIntake(s, currentRole, args);
+          } catch (error) {
+            if (!error.violations) throw error;
+            return { state: "invalid", verificationCode: error.verificationCode, violations: error.violations, warnings: error.warnings ?? [] };
+          }
+          for (const changed of result.digestChanged ?? []) {
+            this.notice(
+              s,
+              currentRole.id,
+              `plan-intake-digest:${args.requirementId}:${changed.key}:${changed.digest.slice(0, 8)}`,
+              `计划票面已变更：${changed.key} (${changed.digest.slice(0, 8)})`,
+              null,
+              true,
+            );
+          }
+          break;
         case "dispatchPlan":
           result = dispatchPlan(s, currentRole, args);
           break;
@@ -3869,6 +3916,10 @@ export class Workflow {
       return { candidate: null, executable: false, remainingBlockers: [diagnosis.reason] };
     const make = (command, args = {}) => ({ command, args: { taskId: task.id, reason: reason ?? "按原票诊断恢复", ...args } });
     const suggestion = diagnosis.nextAction;
+    const manualRed = diagnosis.actionRequired ?? diagnosis.afterChecks;
+    if (manualRed?.args?.realignRedBaseline && manualRed.requiredParameters?.includes("redBaselineHead"))
+      return { candidate: suggestion?.command === "checkStatus" ? suggestion : manualRed,
+        executable: false, remainingBlockers: [diagnosis.reason] };
     if (suggestion?.args?.refreshSourceDigest === true || suggestion?.args?.realignRedBaseline === true || diagnosis.unownedWrites || diagnosis.suggestedTests ||
         suggestion?.command === "confirmForeignDirty" || suggestion?.args?.confirmForeignDirty !== undefined)
       return { ...this.tryRecovery(s, role, suggestion), requiresConfirmation: true };
@@ -4107,17 +4158,17 @@ export class Workflow {
           return result("red-baseline-unverified", reason, pending ? action("checkStatus") : repair,
             { ...(pending && { afterChecks: repair }), ...(failedRed && { checkId: failedRed.check.id }) });
         }
-        const fallback = this.redBaselineHeadFallback(task, root, git);
+        const manual = this.manualRedBaselineRecovery(task, git);
+        const pending = manual && s.checkJobs.some(job => jobIncludes(job, task.id) && activeCheck(job));
         if (failedRed) {
           const reason = "红检查退出码 0，未取得目标断言失败。请核对原日志，确认用例执行了目标断言，以及取红实现是否已经包含待验证行为。";
           return result("red-exit-zero", reason, { command: "checkEvidence", args: { jobId: failedRed.id } },
-            { checkId: failedRed.check.id, ...(fallback && { actionRequired: fallback }) });
+            { checkId: failedRed.check.id, ...(manual && (pending ? { afterChecks: manual } : { actionRequired: manual })) });
         }
-        if (fallback) {
-          const pending = s.checkJobs.some(job => jobIncludes(job, task.id) && activeCheck(job));
-          const message = "自动定位取红快照失败。当前 HEAD 可作为候选，请先核对该提交的写集确实尚未实现本票行为。";
-          return result("red-baseline-unverified", message, pending ? action("checkStatus") : fallback,
-            { message, ...(pending ? { afterChecks: fallback } : { actionRequired: fallback }) });
+        if (manual) {
+          const message = "无法自动定位取红快照。请核对包含必要前置、尚未实现本票行为的提交，填写 redBaselineHead 和核对依据。";
+          return result("red-baseline-unverified", message, action(pending ? "checkStatus" : "describeDrift"),
+            pending ? { afterChecks: manual } : { actionRequired: manual });
         }
       }
       if (drift?.contentDrift && drift.from === drift.to && !drift.gitBlocker)
@@ -4455,6 +4506,10 @@ export class Workflow {
     const projection = this.inheritedRedBaseline(s, task, root, git) ??
       (needsProjection ? projectImplementationBaseline(root, task, task.writes, expected) : null);
     if (needsProjection && !projection) return null;
+    // A dirty implementation admitted without a separate red snapshot only has a working-tree fingerprint.
+    // A different Git fingerprint does not identify which behavior was missing.
+    if (!projection && !task.redBaseline && task.baseline.admissionOwnedDirty?.some(file =>
+      !coversPath(task.verification.testWrites, file))) return null;
     const head = projection?.head ?? expected.sourcesHead ?? expected.head;
     if (!/^[a-f0-9]{40,64}$/.test(head ?? "")) return null;
     const args = { taskId: task.id, realignRedBaseline: true, expectedHead: git.head, redBaselineHead: head,
@@ -4468,15 +4523,16 @@ export class Workflow {
     if (projection && proposed.sources !== projection.sources || !needsProjection && proposed.sources === expected.sources) return null;
     return { command: "reviseSchedule", args, ownerRole: "controller" };
   }
-  redBaselineHeadFallback(task, root, git) {
-    const args = { taskId: task.id, realignRedBaseline: true, expectedHead: git.head, redBaselineHead: git.head,
-      reason: "已核对当前 HEAD 尚未实现本票行为，按该 Git 提交续接取红" };
-    try { this.redCommitSnapshot(root, task, git, args); }
-    catch (error) {
-      if (error.verificationCode !== "contract-invalid") throw error;
-      return null;
-    }
-    return { command: "reviseSchedule", args, ownerRole: "controller", requiredParameters: ["reason"] };
+  manualRedBaselineRecovery(task, git) {
+    if (releasedTaskScope(task) || task.state === "accepted" || git.branch !== task.baseline.branch ||
+        git.branch === "HEAD" || !git.indexClean || task.baseline.fingerprintEol !== fingerprintEol) return null;
+    return {
+      command: "reviseSchedule",
+      args: { taskId: task.id, realignRedBaseline: true, expectedHead: git.head },
+      ownerRole: "controller",
+      requiredParameters: ["redBaselineHead", "reason"],
+      candidateHeads: { currentHead: git.head, admissionHead: task.baseline.head },
+    };
   }
   realignRedBaseline(s, task, args, role) {
     need(Object.keys(args).every(key => ["taskId", "realignRedBaseline", "expectedHead", "redBaselineHead", "reason"].includes(key)),
@@ -4901,6 +4957,7 @@ export class Workflow {
       requirements: s.requirements.filter(
         (r) => !role || r.projectId === role.projectId,
       ),
+      plannedTickets: plannedTicketsView(s, role?.projectId),
       tasks: s.tasks
         .filter((t) => !role || t.projectId === role.projectId)
         .map((task) => ({
@@ -5799,9 +5856,11 @@ buildCache {projectId}：只读查看最近 4 条前置构建缓存（cacheKey�
 静默 resume（silent:true、actionable:false）按项目合并，不属于待办。无需查看 inbox 或回报「没有任务」；如无异常直接结束本轮。真实派审、开放责任和问答单独投递。
 abandonTask {taskId,reason}：主控可终止已证明停写的未投递 queued 票、无排队输入和后台作业的 paused 票，或无责任成员的 trial 票。waiting_verification 票的当前候选已交付，且新鲜宿主遥测证明交付后回合已结束、成员空闲时，也可直接终止或使用 supersede。票须无未完检查，终止会释放范围并保留全部证据及审计。有承接票时使用 supersede 转移依赖。
 收口顺序：成员交付 → 主控独立探针或高风险独立审查 → summarize → 最后按用户已有 Git 授权提交。若必须先提交：已交付候选内容完全等价时，由主控 confirmCommit {taskId,expectedBase,expectedHead,paths,reason} 显式确认；保留候选、报告、检查、当前阶段及已满足的依赖。不能证明等价时沿 diagnoseTask 的 rework→rebindCommittedWork 路径，重跑原绿、完整及适用独立检查。上述命令都不替用户执行 Git 提交、回滚或历史改写。不能仅凭 Git 作者名判断是主控还是成员提交。
+同一工作树确需严格串行且已有 Git 提交授权时，逐票派发。前票 summarize 后提交可安全隔离的本票改动，核对提交和工作区状态，再用 dispatchPlan 派下一票，让其从新 HEAD 取基线。verified 前置可能在提交前放行，下一票先保留在计划中。已有其他票在途时，先核对提交对其写集、读集和检查输入的影响。发生漂移时按 diagnoseTask 回执处理。
 主控上下文含「当前状态」块，压缩后以该块为准，不要为确认 HEAD、在途票 taskId、检查通过数而重新逐票 inspect。
 previewPlan：同一份参数预检，不派发、不冻结。返回 state、violations（path/expected/remedy）和范围派生；无论预检通过与否都不承诺在线。支持 sources.ticketsDir 或 sources.tickets 文件数组。sources 示例：{"spec":"spec.md","tickets":"tickets.md","attempts":"attempts.md"}；票面文件的 lingflow-contract JSON 围栏可冻结必改文件、必改测试与 AC；预检和派发共同核对，未采用围栏的旧规划兼容。
 approve {text,source}：仅 DSH 主控。登记用户已授权执行的目标和可观察验收条件。source 为用户确认的对话摘录或引用。仅讨论和未确认草稿不登记；沿用已有需求 ID。
+planIntake {requirementId,sources:{spec,tickets|ticketsDir,attempts},tickets?:[{key,title?,risk?,dependsOn?}],remove?:[key],operationId}：仅本项目主控。先于 dispatchPlan 登记或移除已规划但暂不派发的票面，校验 AC、contract 与 checks 围栏；不冻结契约、不占读写范围且不计入收口进度，dispatchPlan 派发同票时自动转正。
 dispatch {requirementId,developerId,title,description,risk,readOnly:true,writes:[],reads,resources,dependencies:[任务ID]}：派给开发成员的纯只读调查。独立审查由高风险票交付后自动派发，沿用冻结候选及证据。
 dispatchPlan {requirementId,sources:{spec,tickets,attempts},tickets:[{key,developerId,title,description,brief?,boundaries?,stopConditions?,risk,riskReason?,readOnly?,writes,reads,resources,ownedDirty?,after:[{ticket或taskId,stage:"verified|accepted"}],verification}],batches?}：仅 DSH 主控。来源为项目相对文件。一次登记可前向引用的计划图。实施票的 verification={acceptance:[{id,text}],testWrites:[测试文件],checks:[{id,stage:"red|green|full|regression|independent|controller",argv:[程序,参数...],inputs:[相对路径],covers:[AC编号],expectedExit?,expectedOutput?,timeoutMs?}]}。红绿同命令及输入，红阶段声明真实失败标记。evidenceKind 按 argv 推断：test 要求真实用例/断言；probe 红证据要求预期非零退出码、expectedOutput 和本进程 Error 错误栈（含 at）或 AssertionError，不强制 AssertionError 文案；compile 的 TS/SyntaxError 属于代码错误。failed-before-tests 的两秒规则仅用于 test；启动、缺依赖、信号和超时均不得作为红证据。full 的 covers 并集覆盖全部 AC。regression 是开发回归门，covers=[]，不能替代 AC 证据；主控探针最多 60000ms。免审实施票至少一项 independent。确有必要时冻结 controller 收口探针。检查输入也参加并发冲突判断。共享数据库、端口及环境写进 resources。
 允许票根 browserE2E，预检报告归并；Hive 票面可派生具名用例。快速模式默认零条浏览器 E2E。仅浏览器能证明关键 AC 时，在 verification.browserE2E 填 [{file:"e2e/feature.spec.ts",title:"关键行为",reason:"为何无法以 API 或组件测试证明",covers:["AC1"]}]。检查由开发执行，每条至少绑定一个 full 检查，inputs 包含该文件且 covers 包含相应 AC。argv 示例：${JSON.stringify(browserCheckArgv({ file: "e2e/feature.spec.ts", title: "关键行为" }))}。证据型浏览器命令绑定一个文件和字面标题；整文件或整套用 regression。主控和累计检查不能代跑，审查核对断言和实测。
@@ -5814,6 +5873,7 @@ Git 对账：同分支快进若未触及冻结读写与检查输入，或可证�
 rebindCommittedWork {taskId,expectedBase,expectedHead,confirmPaths,confirmOwnedDirty?,confirmReadPromotion?,confirmRecordedBaseline?,reason}：仅主控。先用 diagnoseTask 核对，活动票先停写交回；待重准入的 queued 或已暂停 paused 且无候选的原票可直接重绑。同分支快进、原写集（含已核准扩围）可证明、只读输入干净且无未完检查时可沿原票重绑。confirmPaths 只确认本票写集中的提交变更；写集工作树尚有在途改动时按 diagnoseTask 用 confirmOwnedDirty 精确确认路径与 SHA-256；若包含准入时在 reads 后扩入 writes 的旧扩容路径，按 diagnoseTask 用 confirmReadPromotion 精确确认。检查 inputs 中已入库的变化列入 checkInputDrift，由主控随预期 HEAD 一起核对。显式 reads 或必需产物有变化时须先核对契约。诊断要求 confirmRecordedBaseline 时使用回执中的冻结来源路径及指纹。保留匹配的历史红证据，绿、完整检查及验收按新基线执行。不操作 Git 历史。
 重绑回执给出 redBaselineRebound、redBaselineHead 和 redBaselineReason。新提交实现等价时续接红基线。需要重跑时，按回执恢复原取红实现，运行真实红，再恢复已核对实现跑绿和完整检查。主控可用 reviseSchedule {taskId,refreshBaseline:true,expectedHead,redBaselineHead,reason} 选定当前 HEAD 或其祖先作为取红依据。
 仅取红基线错位时，主控用 reviseSchedule {taskId,realignRedBaseline:true,expectedHead,redBaselineHead,reason} 单独续接。在途检查须先完成或对账。保留候选和检查历史。已暂停的开发票以新调度版本排队，原成员空闲后按 rework 投递。红检查退出码 0 时，先按 diagnoseTask 核对未实现的取红提交及用例选择。
+无法自动定位取红快照时，diagnoseTask 的待确认动作列出当前 HEAD 和准入 HEAD 供核对。主控确认所选提交包含必要前置、且缺少本票目标行为后，填写 redBaselineHead 和 reason，再由开发用冻结用例取得目标断言失败。
 仅写测试的票自动在冻结 Git 提交的隔离副本上取红，并使用当前冻结测试。其他票可在显式 red 检查声明 redMode:"auto-revert"。隔离基线通过时，核对该提交是否已有目标行为。checkStatus、inspect 和 diagnoseTask 可查看 redProofDiagnostics。
 票外归属以当前文件 SHA-256 对账。diagnoseTask 给出候选责任票、当前状态能否确认和可用命令。开发中的票可在检查结束后由主控确认，文件字节变化后重新诊断和核对。
 refreshBaseline 按冻结的 fingerprintEol 对照工作区和提交中的实现内容。normalize 接受仅 CRLF/LF 的差异，raw 要求原始字节一致。修复失效基线后按 nextAction 重跑红检查；再次核对相同实现会保留有效的红回执。
@@ -5853,4 +5913,3 @@ rework {taskId,reason,adjustScope?,evidence?}：主控安排原票返工。只�
 operation {id:原operationId}：查询原操作回执。无结果保留原 ID，不生成新派单。
 派发、预检和 reviseSchedule 的可选 contextReads:["相对路径"] 只供背景阅读，不锁写者，也不作候选证据；只读票请明确 reads，确实不读工作区才填 []。两者都不声明时视为读集未知，与在飞写集串行；不会自动把证据读取降级。reads、writes 和实际检查 inputs 仍按冻结快照校验。检查或批次可声明 failureOutput（例如 "AssertionError"）；非红阶段仅在完整回执同时证明退出码异常和命中断言标记时归为 quality-failed，未证实归为 evidence-missing。旧实施票可保留报告与审查历史，缺契约时不能走原生汇总或验收；剩余工作用 dispatchPlan 建立后继票。
 需求讨论、登记和派单在 DSH 主控会话。试用结论可由用户在工作台登记，也可由本项目主控根据明确用户反馈登记。`;
-

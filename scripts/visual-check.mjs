@@ -50,7 +50,7 @@ assert.equal(result.themeButton, true, "左上角 Logo 下方缺少主题切换�
 // 对话框断言
 assert.ok(result.dialogSummary, "窗口外观对话框未打开");
 assert.equal(result.dialogSummary.open, true);
-assert.equal(result.dialogSummary.themeCards, 4, "应展示 4 个预设主题");
+assert.equal(result.dialogSummary.themeCards, 8, "应展示 8 个预设主题");
 assert.ok(result.dialogSummary.hasRange >= 3, "应提供位置与透明度滑块");
 assert.ok(result.dialogSummary.assets >= 1, "对话框里应列出已导入素材");
 
@@ -73,6 +73,10 @@ const required = [
   "02-theme-white",
   "02-theme-lavender",
   "02-theme-sky",
+  "02-theme-mint",
+  "02-theme-sugar",
+  "02-theme-crimson",
+  "02-theme-citrus",
   "03-wallpaper",
   "04-wallpaper-persisted",
   "05-theme-dialog",

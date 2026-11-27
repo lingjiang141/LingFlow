@@ -72,9 +72,13 @@
 
 在途期间不自行提交。成员用 `describeDrift` 核对提交差异，用 `report outcome=blocked` 交主控；不能自行重绑。主控显式重绑后，失效的红证据必须从原取红实现重跑，再检验新 HEAD 下的绿和完整检查。恢复原实现只操作冻结写集，不回退 Git HEAD。成员可用 `proposeOwnedDirty` 提报写集路径与原始字节 SHA-256；主控须用 `reviseSchedule` 的 `confirmOwnedDirty` 精确确认或 `rejectOwnedDirty:true` 拒绝。
 
+主控在同一工作树严格串行推进多张实施票且具备 Git 提交授权时，逐票派发。前票 `summarize` 后提交可安全隔离的本票改动，核对提交和工作区状态后，再派下一票以新 HEAD 为基线。`verified` 前置可能在提交前放行，因此下一票在提交前保留于计划中。
+
 ## 新增测试与红证据
 
 采用测试写集排除方案，无需先提交测试或新增 `testFirst` 字段。派发冻结路径和检查命令后，开发先编写 `testWrites`，保持实现文件与基线一致，运行 red；取得真实断言失败后修改实现，再运行 green 和 full。
+
+无法自动定位取红快照时，`diagnoseTask` 把当前 HEAD 和准入 HEAD 列为核对线索。主控确认某个提交包含必要前置且尚未实现本票行为后，用 `reviseSchedule {taskId,realignRedBaseline:true,expectedHead,redBaselineHead,reason}` 续接。其中 `expectedHead` 是当前 HEAD，`redBaselineHead` 是主控选定的当前或历史提交。续接后由开发运行冻结 red 检查。
 
 测试发生变化时，版本 2 的 `redProof` 绑定已准入的实现基线、实现侧写集和非写集输入。回执显式列出 `redProofScope` 与 `excludedTestWrites`。独立的 `redTestProof` 配对实际运行的测试，防止取得红证据后将断言替换为空跑；改测试后须在实现基线上重跑 red。测试未变化的票保留旧红指纹算法，已有有效旧格式回执也可以继续核验。
 

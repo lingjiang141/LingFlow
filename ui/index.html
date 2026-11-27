@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>LingFlow · 本地协作</title>
+    <link rel="icon" type="image/png" href="/logo.png" />
     <link rel="stylesheet" href="/style.css" />
     <link rel="stylesheet" href="/cards.css" />
   </head>
@@ -11,7 +12,54 @@
     <div id="window-background" aria-hidden="true"></div>
     <div id="window-scrim" aria-hidden="true"></div>
     <aside>
-      <div class="brand"><b>◈</b> LingFlow<span>本地 Agent 工作流</span></div>
+      <div class="brand" aria-label="LingFlowAgent 本地 Agent 工作流">
+        <svg class="brand-wordmark-svg" viewBox="0 0 224 56" role="img" aria-label="LingFlowAgent">
+          <defs>
+            <linearGradient id="lf-brand-f-grad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="var(--lf-text)" />
+              <stop offset="38%" stop-color="var(--lf-text)" />
+              <stop offset="72%" stop-color="var(--lf-brand-a)" />
+              <stop offset="100%" stop-color="var(--lf-brand-a)" />
+            </linearGradient>
+            <linearGradient id="lf-brand-a-grad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="var(--lf-text)" />
+              <stop offset="35%" stop-color="var(--lf-text)" />
+              <stop offset="78%" stop-color="var(--lf-brand-b)" />
+              <stop offset="100%" stop-color="var(--lf-brand-b)" />
+            </linearGradient>
+          </defs>
+          <!-- 横竖淡色参考线 -->
+          <g class="brand-guides" stroke="var(--lf-brand-grid)" stroke-width="0.75" fill="none">
+            <line x1="2" y1="20.2" x2="222" y2="20.2" />
+            <line x1="2" y1="26.5" x2="222" y2="26.5" />
+            <line x1="2" y1="42" x2="222" y2="42" />
+            <line x1="2" y1="48.8" x2="222" y2="48.8" />
+            <line x1="14.2" y1="11" x2="14.2" y2="53" />
+            <line x1="70" y1="11" x2="70" y2="53" />
+            <line x1="81" y1="11" x2="81" y2="53" />
+            <line x1="140.2" y1="11" x2="140.2" y2="53" />
+            <line x1="149.4" y1="11" x2="149.4" y2="53" />
+            <line x1="209.5" y1="11" x2="209.5" y2="53" />
+          </g>
+          <!-- Ling / low / gent 几何无衬线字体 -->
+          <g font-family="'Segoe UI', 'Microsoft YaHei', sans-serif" font-size="30" font-weight="600" letter-spacing="-0.4" fill="var(--lf-text)">
+            <text x="12" y="42">Ling</text>
+            <text x="83.1" y="42">low</text>
+            <text x="150.1" y="42">gent</text>
+          </g>
+          <!-- F：上横及顶部承接主题字色，竖笔向下渐变至第一抹主题色并向右弯出实心圆点 -->
+          <rect x="70" y="20.2" width="11.6" height="3.1" fill="var(--lf-text)" />
+          <rect x="70" y="20.2" width="3.3" height="21.8" fill="url(#lf-brand-f-grad)" />
+          <path d="M 71.6 36.6 Q 71.6 30.8 76.2 30.8 H 79.4" stroke="var(--lf-brand-a)" stroke-width="3.2" stroke-linecap="round" fill="none" />
+          <circle cx="79.6" cy="30.8" r="2.8" fill="var(--lf-brand-a)" />
+          <!-- A：左斜笔平顶承接主题字色，右斜笔向下渐变至第二抹主题色并向内延展出圆点横笔 -->
+          <polygon points="130.6,42 138.3,20.2 141.9,20.2 134.1,42" fill="var(--lf-text)" />
+          <polygon points="138.7,20.2 142.3,20.2 149.8,42 146.2,42" fill="url(#lf-brand-a-grad)" />
+          <path d="M 145.6 35.6 H 138.2" stroke="var(--lf-brand-b)" stroke-width="3.2" stroke-linecap="round" fill="none" />
+          <circle cx="137.4" cy="35.6" r="2.8" fill="var(--lf-brand-b)" />
+        </svg>
+        <span>本地 Agent 工作流</span>
+      </div>
       <div id="theme-dock" class="theme-dock"></div>
       <div class="aside-section-head">
         <div class="eyebrow">工作空间</div>
@@ -20,9 +68,7 @@
       <nav id="projects"></nav>
       <button id="new-project" class="subtle new-project">＋ 添加项目</button>
       <div class="aside-bottom">
-        <span class="dot"></span> 本地运行 · DSH<br /><small
-          >快速模式 / 独立窗口</small
-        >
+        <span class="dot"></span> 本地运行 · DSH
       </div>
     </aside>
     <main>
@@ -31,16 +77,20 @@
           <div class="eyebrow">协作工作台</div>
           <div class="title-row">
             <h1 id="project-title">让协作有始有终。</h1>
-            <button id="rename-project" class="icon-button" type="button" title="重命名工作区" aria-label="重命名工作区" hidden></button>
           </div>
           <p id="project-path">连接真实会话，从一次明确的需求开始。</p>
         </div>
-        <div class="project-actions">
-          <button id="desktop-pet" hidden>桌宠模式</button>
-          <span class="badge">快速模式</span>
-          <button id="controller-settings" hidden>主控提示词</button>
-          <button id="check-settings" hidden>后台检查</button>
-          <button id="delete-project" class="danger" hidden>删除项目</button>
+        <div class="header-side">
+          <div id="project-tools" class="header-tools" hidden>
+            <button id="open-folder" class="header-tool-btn" type="button" title="打开项目文件夹" aria-label="打开项目文件夹"></button>
+            <button id="open-cmd" class="header-tool-btn" type="button" title="在项目目录打开 CMD 终端" aria-label="在项目目录打开 CMD 终端"></button>
+          </div>
+          <div class="project-actions">
+            <button id="desktop-pet" hidden>桌宠模式</button>
+            <button id="controller-settings" hidden>主控提示词</button>
+            <button id="check-settings" hidden>后台检查</button>
+            <button id="delete-project" class="danger" hidden>删除项目</button>
+          </div>
         </div>
       </header>
       <div id="error" role="alert" hidden></div>
@@ -57,22 +107,29 @@
         </div>
       </section>
       <div id="workspace" hidden>
-        <section class="section">
+        <section class="section section-delivery">
           <div class="section-head">
-            <h2>需求与交付</h2>
-            <span>在主控会话讨论需求与派单</span>
+            <div class="section-title-group">
+              <h2>需求与交付</h2>
+              <select id="spec-scope" aria-label="规格范围"></select>
+            </div>
+            <div id="risk-filters" class="risk-filters" role="group" aria-label="按风险筛选">
+              <button type="button" class="filter-pill is-active" data-risk="all">全部</button>
+              <button type="button" class="filter-pill" data-risk="high">高风险</button>
+              <button type="button" class="filter-pill" data-risk="medium">中风险</button>
+              <button type="button" class="filter-pill" data-risk="low">低风险</button>
+            </div>
           </div>
-          <div class="spec-board-header">
-            <label for="spec-scope">规格范围</label>
-            <select id="spec-scope"></select>
-            <p id="spec-summary"></p>
-          </div>
+          <div id="spec-metrics" class="spec-metrics"></div>
           <div class="board" id="board"></div>
         </section>
-        <section class="section">
+        <section class="section section-roles">
           <div class="section-head">
-            <h2>团队会话</h2>
-            <div><button id="patrol-settings">自动巡检</button> <button id="add-role">＋ 添加成员</button></div>
+            <div class="section-title-group">
+              <h2>团队会话 <span id="roles-count" class="section-count"></span></h2>
+              <span class="section-subtitle">已保留原任务 · 不会终止正在运行的会话</span>
+            </div>
+            <div class="section-actions"><button id="patrol-settings">自动巡检</button> <button id="add-role">＋ 添加成员</button></div>
           </div>
           <div id="roles" class="roles"></div>
           <p id="no-roles" class="muted" hidden>暂无成员。点击「添加成员」配置团队。</p>

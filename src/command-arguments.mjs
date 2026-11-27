@@ -7,6 +7,7 @@ export const requiredArguments = Object.freeze({
   checkStatus: [], inspectPlan: ['planId'], scopePreview: ['writes'],
   buildCache: ['projectId'],
   previewPlan: ['requirementId', 'sources', 'tickets'], dispatchPlan: ['requirementId', 'sources', 'tickets'],
+  planIntake: ['requirementId', 'sources'],
   createProject: ['name', 'root'], deleteProject: ['projectId'], renameProject: ['projectId', 'name'], addRole: ['projectId', 'kind', 'name'],
   setControllerPolicy: ['projectId'], setAutoPatrol: ['projectId', 'enabled'],
   publishPlan: ['text', 'sources'], message: ['text'], savePromptPreset: ['name', 'identityPrompt'],

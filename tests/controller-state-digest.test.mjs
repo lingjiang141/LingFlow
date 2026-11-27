@@ -48,7 +48,7 @@ test("digest excludes ownership hashes, file confirmations, and URLs", () => {
 
 test("only the controller receives state and the controller policy revs independently", () => {
   assert.ok(roleContext(project, lead, true, state()).stateDigest);
-  for (const [role, expected] of [[lead, 10], [dev, 7], [{ kind: "reviewer" }, 4], [{ kind: "supervisor" }, 1]]) {
+  for (const [role, expected] of [[lead, 11], [dev, 7], [{ kind: "reviewer" }, 4], [{ kind: "supervisor" }, 1]]) {
     assert.equal(policyVersion(role), expected);
     if (role !== lead) assert.equal(roleContext(project, { id: "member", ...role }, false, state()).stateDigest, "");
   }
@@ -60,6 +60,7 @@ test("lean planning and incremental sequencing apply alongside a custom controll
   assert.match(context.rules, /planned-attempts 只记跨票协调/);
   assert.match(context.rules, /开发决定票内路线并设计具体断言、夹具和反例/);
   assert.match(context.rules, /queued 原票用 insertSchedule/);
+  assert.match(context.rules, /前票 summarize 后，按已有 Git 授权提交可安全隔离的本票改动，核对提交及工作区后再派下一票/);
   assert.match(context.rules, /本次决定缺事实时只核对相关原票/);
 });
 

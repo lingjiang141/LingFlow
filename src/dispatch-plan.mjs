@@ -31,6 +31,143 @@ export function dispatchPlan(state, role, args) {
   return freezePlan(state, role, args, "dispatch");
 }
 
+function readPlanDocuments(project, args, { allowMissingChecks = false } = {}) {
+  let documents;
+  try { documents = planSources(project.root, args.sources, true); } catch (error) {
+    throw invalidPlan([violation("sources", error.message, planSchema.sources, "指定存在的项目相对规划文件或 issues 目录")]);
+  }
+  const sources = Object.fromEntries(Object.entries(documents).map(([name, doc]) => [name, { file: doc.file, digest: doc.digest }]));
+  const specVersion = readSpecVersion(documents.spec.text);
+  const ticketDocuments = Object.entries(documents).filter(([name]) => name === "tickets" || name.startsWith("ticket:"));
+  const violations = [], warnings = [];
+  if (!specVersion || !hasSpecChangeLog(documents.spec.text)) {
+    const missing = [!specVersion && "Version: N", !hasSpecChangeLog(documents.spec.text) && "## 变更记录"].filter(Boolean);
+    violations.push(violation("sources.spec", `规格缺少 ${missing.join("、")}`, "Version: 1 和 ## 变更记录",
+      "在 spec 顶部补版本及变更记录，再用相同参数执行 previewPlan，随后 dispatchPlan"));
+  }
+  const { contracts, hiveTickets, ticketChecks } = readPlanTickets(project.root, ticketDocuments, violations);
+  return { documents, sources, specVersion, ticketDocuments, violations, warnings, contracts, hiveTickets, ticketChecks, allowMissingChecks };
+}
+
+export function planIntake(state, role, args) {
+  const requirement = find(state.requirements, args.requirementId);
+  need(role?.kind === "controller" && role.projectId === requirement.projectId, "请在本项目已开启的 DSH 主控会话登记计划票");
+  const project = find(state.projects, role.projectId);
+  state.plannedTickets ??= [];
+  const warnings = [];
+  unknownFields(args, ["requirementId", "sources", "tickets", "remove"], "planIntake", warnings);
+  unknownFields(args.sources, ["spec", "tickets", "ticketsDir", "attempts"], "sources", warnings);
+
+  const removeKeys = args.remove === undefined ? [] : list(args.remove, "移除计划票", 30).map(item => key(item, "票"));
+  const discoverFromSources = args.tickets === undefined && !removeKeys.length;
+  const hasTickets = args.tickets !== undefined || discoverFromSources;
+
+  let sources, specVersion, violations = [], contracts = new Map(), hiveTickets = new Map(), ticketChecks = new Map(), ticketDocuments = [];
+  if (hasTickets) {
+    const parsed = readPlanDocuments(project, args);
+    ({ sources, specVersion, violations, contracts, hiveTickets, ticketChecks, ticketDocuments } = parsed);
+    warnings.push(...parsed.warnings);
+  }
+
+  const requestedTickets = discoverFromSources
+    ? [...hiveTickets.values()].map(h => ({ key: h.key }))
+    : args.tickets;
+
+  const entries = [];
+  if (hasTickets) {
+    if (!Array.isArray(requestedTickets) || !requestedTickets.length || requestedTickets.length > 30) {
+      throw invalidPlan([...violations, violation("tickets", "规划须含 1–30 张票", [{ key: "R35-01", risk: "medium" }], "按票编号分批登记")], warnings);
+    }
+    const seen = new Set();
+    for (const [index, raw] of requestedTickets.entries()) {
+      const prefix = `tickets[${raw?.key ?? index}]`;
+      try {
+        const ticketKey = key(raw?.key, "票");
+        need(!seen.has(ticketKey), "重复的计划票编号：" + ticketKey);
+        seen.add(ticketKey);
+        need(!state.tasks.some(t => t.projectId === project.id && t.ticketKey === ticketKey), "该票已派发，不能重复登记为计划票：" + ticketKey);
+        unknownFields(raw, ["key", "title", "risk", "dependsOn"], prefix, warnings);
+        const hive = hiveTickets.get(ticketKey);
+        const contract = contracts.get(ticketKey);
+        const missingAc = !hive || !hive.acceptance?.length;
+        const missingContract = !contract;
+        const missingChecks = !ticketChecks.has(ticketKey) && !contract?.developerChecks;
+        if (missingAc) {
+          violations.push(violation(prefix + ".acceptance", "票面缺少 ## 需求与 AC 或 AC 条款", "## 需求与 AC + **AC-1**", "补全票面 ## 需求与 AC 章节和 AC 条款"));
+        }
+        if (missingContract) {
+          violations.push(violation(prefix + ".ticketContract", "缺少有效的 lingflow-contract 围栏", "```lingflow-contract ... ```", "在票面补齐有效的 lingflow-contract JSON 围栏"));
+        }
+        if (missingChecks) {
+          violations.push(violation(prefix + ".verification.checks", "缺少有效的 lingflow-checks 围栏", "```lingflow-checks ... ```", "在票面补齐有效的 lingflow-checks JSON 围栏，或声明 developerChecks:true"));
+        }
+        if (missingAc || missingContract || missingChecks) continue;
+        const risk = raw?.risk ?? hive.risk ?? "medium";
+        need(["low", "medium", "high"].includes(risk), "风险必须为 low/medium/high");
+        const title = raw?.title !== undefined ? text(raw.title, "票标题") : text(hive.title || ticketKey, "票标题");
+        const dependsOn = raw?.dependsOn === undefined ? (hive.after?.map(d => d.ticket) ?? []) : list(raw.dependsOn, "前置依赖").map(d => key(d, "前置票"));
+        const docEntry = (hive.name && sources[hive.name])
+          || ticketDocuments.map(([name]) => sources[name]).find(doc => doc?.file === contract.source)
+          || sources.tickets
+          || { file: contract.source, digest: sources.spec.digest };
+        entries.push({
+          key: ticketKey,
+          title,
+          risk,
+          digest: docEntry.digest,
+          source: docEntry.file,
+          projectId: project.id,
+          requirementId: requirement.id,
+          specSource: sources.spec,
+          ...(specVersion && { specVersion }),
+          dependsOn: [...new Set(dependsOn)],
+          plannedBy: role.id,
+        });
+      } catch (error) {
+        violations.push(...(error.violations ?? [violation(prefix, error.message, { key: "R35-01", risk: "medium" }, "核对计划票编号、标题、风险与前置依赖")]));
+      }
+    }
+  }
+  if (violations.length) throw invalidPlan(violations, warnings);
+
+  const removed = [];
+  if (removeKeys.length) {
+    const removeSet = new Set(removeKeys);
+    state.plannedTickets = state.plannedTickets.filter(item => {
+      if (item.projectId === project.id && item.requirementId === requirement.id && removeSet.has(item.key)) {
+        removed.push(item.key);
+        return false;
+      }
+      return true;
+    });
+  }
+
+  const added = [], updated = [], digestChanged = [];
+  const now = Date.now();
+  for (const entry of entries) {
+    const existingIndex = state.plannedTickets.findIndex(item => item.projectId === project.id && item.requirementId === requirement.id && item.key === entry.key);
+    if (existingIndex >= 0) {
+      const prev = state.plannedTickets[existingIndex];
+      const changed = prev.digest !== entry.digest;
+      state.plannedTickets[existingIndex] = {
+        ...entry,
+        plannedAt: prev.plannedAt,
+        updatedAt: now,
+        ...(changed && { previousDigest: prev.digest, digestChangedAt: now }),
+      };
+      updated.push(entry.key);
+      if (changed) digestChanged.push({ key: entry.key, previousDigest: prev.digest, digest: entry.digest });
+    } else {
+      state.plannedTickets.push({ ...entry, plannedAt: now });
+      added.push(entry.key);
+    }
+  }
+
+  const projectPlanned = state.plannedTickets.filter(item => item.projectId === project.id)
+    .map(item => ({ ...item, digestShort: item.digest.slice(0, 8) }));
+  return { receipt: "accepted", added, updated, removed, digestChanged, warnings, plannedTickets: projectPlanned };
+}
+
 export function previewPlan(state, role, args, assignmentWarnings) {
   return freezePlan(state, role, args, "preview", { assignmentWarnings });
 }
@@ -188,23 +325,11 @@ function freezePlan(state, role, args, mode, { canAssignDeveloper, assignmentWar
   const requirement = find(state.requirements, args.requirementId);
   need(role?.kind === "controller" && role.projectId === requirement.projectId, "请在本项目已开启的 DSH 主控会话派单");
   const project = find(state.projects, role.projectId);
-  let documents;
-  try { documents = planSources(project.root, args.sources, true); } catch (error) {
-    throw invalidPlan([violation("sources", error.message, planSchema.sources, "指定存在的项目相对规划文件或 issues 目录")]);
-  }
-  const sources = Object.fromEntries(Object.entries(documents).map(([name, doc]) => [name, { file: doc.file, digest: doc.digest }]));
-  const specVersion = readSpecVersion(documents.spec.text);
+  const { documents, sources, specVersion, ticketDocuments, violations, warnings, contracts, hiveTickets, ticketChecks } = readPlanDocuments(project, args);
   const planId = randomUUID();
-  const ticketDocuments = Object.entries(documents).filter(([name]) => name === "tickets" || name.startsWith("ticket:"));
-  const violations = [], warnings = [], normalized = [];
-  if (!specVersion || !hasSpecChangeLog(documents.spec.text)) {
-    const missing = [!specVersion && "Version: N", !hasSpecChangeLog(documents.spec.text) && "## 变更记录"].filter(Boolean);
-    violations.push(violation("sources.spec", `规格缺少 ${missing.join("、")}`, "Version: 1 和 ## 变更记录",
-      "在 spec 顶部补版本及变更记录，再用相同参数执行 previewPlan，随后 dispatchPlan"));
-  }
+  const normalized = [];
   unknownFields(args, ["requirementId","sources","tickets","batches","developerIds"], "plan", warnings);
   unknownFields(args.sources, ["spec","tickets","ticketsDir","attempts"], "sources", warnings);
-  const { contracts, hiveTickets, ticketChecks } = readPlanTickets(project.root, ticketDocuments, violations);
   if (mode === "materialize") {
     const developers = state.roles.filter(member => member.projectId === project.id && member.kind === "developer" && !member.archivedAt);
     need(developers.length, "本项目没有可用开发成员");
@@ -359,8 +484,22 @@ function freezePlan(state, role, args, mode, { canAssignDeveloper, assignmentWar
     })) };
   }
   state.validationBatches.push(...frozenBatches);
+  state.plannedTickets ??= [];
+  const promotedKeys = new Set();
+  for (const task of order) {
+    const planned = state.plannedTickets.find(item => item.projectId === project.id && item.key === task.ticketKey);
+    if (planned) {
+      task.plannedAt = planned.plannedAt;
+      if (planned.plannedBy) task.plannedBy = planned.plannedBy;
+      promotedKeys.add(planned.key);
+    }
+  }
+  if (promotedKeys.size) {
+    state.plannedTickets = state.plannedTickets.filter(item => !(item.projectId === project.id && promotedKeys.has(item.key)));
+  }
+  const stillPlanned = state.plannedTickets.filter(item => item.projectId === project.id).map(item => item.key);
   state.tasks.push(...order);
   state.plans.push({ id: planId, projectId: project.id, requirementId: requirement.id, documents, createdAt: Date.now(),
     ...(specVersion && { specVersion }) });
-  return { receipt: "accepted", planId, warnings, tasks: order.map((task) => ({ key: task.ticketKey, taskId: task.id })) };
+  return { receipt: "accepted", planId, warnings, tasks: order.map((task) => ({ key: task.ticketKey, taskId: task.id })), stillPlanned };
 }

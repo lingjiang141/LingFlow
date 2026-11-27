@@ -8,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { startServer } from "../src/server.mjs";
 import { assertScope, gitState, scopeBaseline } from "../src/quality.mjs";
 import { Store } from "../src/store.mjs";
+import { controllerStateDigest } from "../src/role-context.mjs";
 import { versionedSpec } from "./helpers/evidence-fixture.mjs";
 
 const dimensions = Object.fromEntries(
@@ -211,6 +212,7 @@ process.exitCode = result ? 0 : 1;
     binding: (name) => app.workflow.request({ roleId: roles[name].id, sessionId: name, cwd: root }),
     waitJob,
     inspect,
+    snapshot: () => app.workflow.snapshot(),
     async restart() {
       await app.close();
       app = await startServer({ dataDir, port: 0 });
@@ -1441,4 +1443,115 @@ test("Hive R35 registration with offline developers does not create delivery ack
   for(const {taskId} of receipt.tasks) assert.equal((await f.inspect(taskId)).deliveredAt,null);
   const ticketPath=r35Dir+"/issues/"+r35Files[0];
   assert.match((await f.call("Lead","inspectPlan",{planId:receipt.planId,document:ticketPath})).text,/R35-01/);
+});
+
+test("planIntake surfaces planned tickets cleanly across list, snapshot, partial dispatchPlan and validation", async (t) => {
+  const f = await setup(t, { existingTest: true });
+  const issuesDir = path.join(f.root, "plan-issues");
+  mkdirSync(issuesDir, { recursive: true });
+  const fence = (kind, value) => ["```" + kind, JSON.stringify(value), "```"].join("\n");
+  const makeTicketDoc = ({ ticket, title, writeFile, ac = true, checksFence = true, extraNote = "" }) => [
+    `# 票 ${ticket}：${title}`,
+    "",
+    ...(ac ? ["## 需求与 AC", "", "- **AC1**: 符合批准行为"] : ["## 说明", "无 AC 段落"]),
+    "",
+    "## 依赖与归属",
+    "- 前置：" + (ticket === "PLAN-02" ? "PLAN-01 已落库" : "无"),
+    `- 归属：\`${writeFile}\`、\`behavior.txt\``,
+    "",
+    "## riskAssessment",
+    `- 等级：**${ticket === "PLAN-02" ? "high" : "medium"}**`,
+    ...(ticket === "PLAN-02" ? ["风险理由：涉核心文件，需要独立审查"] : []),
+    ...(extraNote ? [extraNote] : []),
+    "",
+    fence("lingflow-contract", {
+      ticket,
+      requiredWrites: [writeFile],
+      requiredTestWrites: ["behavior.txt"],
+      requiredAcceptance: ["AC1"],
+      ...(ticket === "PLAN-02" && {
+        riskItems: [{ id: "RISK-1", reason: "涉核心文件", impact: "状态变化", coveredBy: ["AC1"], verifiedBy: ["full", "independent"] }],
+      }),
+    }),
+    ...(checksFence ? [fence("lingflow-checks", {
+      ticket,
+      checks: [
+        { id: "red", stage: "red", argv: ["node", "verify.cjs"], inputs: ["verify.cjs", "behavior.txt", writeFile], covers: ["AC1"], expectedOutput: "assertion: approved behavior missing" },
+        { id: "green", stage: "green", argv: ["node", "verify.cjs"], inputs: ["verify.cjs", "behavior.txt", writeFile], covers: ["AC1"], failureOutput: "assertion: approved behavior missing" },
+        { id: "full", stage: "full", argv: ["node", "verify.cjs", "full"], inputs: ["verify.cjs", "behavior.txt", writeFile], covers: ["AC1"] },
+        { id: "independent", stage: "independent", argv: ["node", "probe.cjs"], inputs: ["probe.cjs", writeFile], covers: ["AC1"] },
+      ],
+    })] : []),
+  ].join("\n");
+
+  writeFileSync(path.join(issuesDir, "PLAN-01.md"), makeTicketDoc({ ticket: "PLAN-01", title: "首张规划票", writeFile: "feature.txt" }));
+  writeFileSync(path.join(issuesDir, "PLAN-02.md"), makeTicketDoc({ ticket: "PLAN-02", title: "待后继规划票", writeFile: "feature-b.txt" }));
+  const sources = { spec: f.sources.spec, ticketsDir: "plan-issues", attempts: f.sources.attempts };
+
+  // AC4: invalid ticket batch rejects cleanly without polluting plannedTickets
+  writeFileSync(path.join(issuesDir, "BAD-01.md"), makeTicketDoc({ ticket: "BAD-01", title: "缺少围栏", writeFile: "feature.txt", ac: false, checksFence: false }));
+  const rejected = await f.call("Lead", "planIntake", { requirementId: f.requirement.id, sources }, "plan-intake-bad");
+  assert.equal(rejected.state, "invalid");
+  assert.ok(rejected.violations.length >= 2);
+  assert.deepEqual((await f.call("Lead", "list")).plannedTickets, []);
+  unlinkSync(path.join(issuesDir, "BAD-01.md"));
+
+  // AC1: valid planIntake exposes plannedTickets immediately without freezing tasks or polluting controller digest
+  const digestBefore = controllerStateDigest(await f.snapshot(), f.project.id);
+  const intake = await f.call("Lead", "planIntake", { requirementId: f.requirement.id, sources }, "plan-intake-1");
+  assert.equal(intake.receipt, "accepted");
+  assert.deepEqual(intake.added.sort(), ["PLAN-01", "PLAN-02"]);
+  const listed = await f.call("Lead", "list");
+  assert.equal(listed.tasks.length, 0);
+  assert.deepEqual(listed.plannedTickets.map(p => [p.key, p.requirementClosed]), [["PLAN-01", false], ["PLAN-02", false]]);
+  assert.ok(listed.plannedTickets.every(p => typeof p.digestShort === "string" && p.digestShort.length === 8));
+  const snapAfterIntake = await f.snapshot();
+  assert.equal(snapAfterIntake.checkJobs.length, 0);
+  assert.equal(controllerStateDigest(snapAfterIntake, f.project.id), digestBefore);
+
+  // AC3 part 1: idempotent re-intake & digestChanged notice on source edit
+  const sameAgain = await f.call("Lead", "planIntake", { requirementId: f.requirement.id, sources }, "plan-intake-2");
+  assert.deepEqual(sameAgain.digestChanged, []);
+  writeFileSync(path.join(issuesDir, "PLAN-02.md"), makeTicketDoc({ ticket: "PLAN-02", title: "待后继规划票 v2", writeFile: "feature-b.txt", extraNote: "补充背景说明" }));
+  const changed = await f.call("Lead", "planIntake", { requirementId: f.requirement.id, sources }, "plan-intake-3");
+  assert.equal(changed.digestChanged.length, 1);
+  assert.equal(changed.digestChanged[0].key, "PLAN-02");
+  const leadInbox = await f.call("Lead", "inbox");
+  assert.ok(leadInbox.notices.some(n => n.silent && n.summary.includes("计划票面已变更：PLAN-02")));
+
+  // AC2: dispatchPlan promotes PLAN-01 and leaves PLAN-02 as stillPlanned; PLAN-02 holds zero scope lock
+  await f.heartbeat(["Lead", "Supervisor"]);
+  const scopeBefore = await f.call("Lead", "scopePreview", { writes: ["feature-b.txt"], reads: ["verify.cjs"], resources: [] });
+  assert.deepEqual(scopeBefore.conflicts, []);
+  const dispatched = await f.call("Lead", "dispatchPlan", {
+    requirementId: f.requirement.id,
+    sources,
+    tickets: [{
+      key: "PLAN-01",
+      developerId: f.roles.DevA.id,
+      title: "首张规划票",
+      description: "实施首张规划票",
+      risk: "medium",
+      writes: ["feature.txt", "behavior.txt"],
+      reads: ["verify.cjs"],
+      verification: f.ticket.verification,
+    }],
+  }, "dispatch-plan-1");
+  assert.equal(dispatched.receipt, "accepted");
+  assert.deepEqual(dispatched.stillPlanned, ["PLAN-02"]);
+  const snapAfterDispatch = await f.snapshot();
+  assert.equal(snapAfterDispatch.plannedTickets.length, 1);
+  assert.equal(snapAfterDispatch.plannedTickets[0].key, "PLAN-02");
+  const promotedTask = snapAfterDispatch.tasks.find(item => item.ticketKey === "PLAN-01");
+  assert.ok(promotedTask.plannedAt > 0 && promotedTask.plannedBy === f.roles.Lead.id);
+
+  // Requirement closed check: once PLAN-01 reaches terminal state, un-dispatched PLAN-02 under same req shows requirementClosed: true
+  await f.call("Lead", "abandonTask", { taskId: promotedTask.id, reason: "测试需求收口标注" }, "abandon-plan-01");
+  const afterClose = await f.call("Lead", "list");
+  assert.equal(afterClose.plannedTickets[0].requirementClosed, true);
+
+  // AC3 part 2: explicit remove removes planned ticket without abandonTask/supersede
+  const removed = await f.call("Lead", "planIntake", { requirementId: f.requirement.id, sources, remove: ["PLAN-02"] }, "plan-intake-remove");
+  assert.deepEqual(removed.removed, ["PLAN-02"]);
+  assert.deepEqual((await f.call("Lead", "list")).plannedTickets, []);
 });

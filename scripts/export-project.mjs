@@ -20,10 +20,21 @@ export function exportProject(destination, source = projectRoot) {
   if (!relative || (!relative.startsWith(".." + path.sep) && relative !== ".." && !path.isAbsolute(relative)))
     throw Error("Export destination must be outside the source project.");
   if (existsSync(target)) throw Error("Destination already exists; no files overwritten: " + target);
+  const bundledPetAssets = new Set();
+  try {
+    const catalog = JSON.parse(readFileSync(path.join(root, "desktop/pet-assets/catalog.json"), "utf8"));
+    for (const character of catalog.characters ?? []) {
+      for (const id of character.bundled ?? []) {
+        const anim = character.animations?.find(item => item.id === id);
+        if (anim?.sha) bundledPetAssets.add(anim.sha + ".webp");
+      }
+    }
+  } catch {}
   const selected = [];
   function walk(file) {
     const parts = file.split("/");
     if (parts.some(part => ignored.has(part)) || file === "ui/assets" || /\.(sqlite(?:-wal|-shm)?|log)$/i.test(file)) return;
+    if (bundledPetAssets.size && file.startsWith("desktop/pet-assets/") && file.endsWith(".webp") && !bundledPetAssets.has(path.posix.basename(file))) return;
     const full = path.join(root, file), stat = lstatSync(full);
     if (stat.isSymbolicLink()) throw Error("Release must not follow local links: " + file);
     if (stat.isDirectory()) {

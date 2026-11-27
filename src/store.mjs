@@ -24,6 +24,7 @@ export class Store {
         promptPresets: [],
         requirements: [],
         tasks: [],
+        plannedTickets: [],
         notices: [],
         wakes: [],
         requests: [],

@@ -2,6 +2,11 @@ import { PetAnimator } from "./animator.js";
 const api = window.lingflowPet, $ = id => document.getElementById(id);
 const configuration = await api.initialize();
 const animator = new PetAnimator($("sprite"), api, configuration.catalog);
+const THEME_IDS = new Set(["dark", "white", "lavender", "sky", "mint", "sugar", "crimson", "citrus"]);
+function applyTheme(nextTheme) {
+  document.documentElement.dataset.theme = THEME_IDS.has(nextTheme) ? nextTheme : "dark";
+}
+applyTheme(configuration.theme);
 let expanded = configuration.expanded, character = configuration.character, view, refreshing, groupSignature, drag;
 const element = (tag, text, className) => {
   const result = document.createElement(tag); result.textContent = text; if (className) result.className = className; return result;
@@ -20,6 +25,7 @@ function layout() {
 }
 async function toggle(value = !expanded) { await api.expanded(value); }
 api.onChange(state => {
+  if (state.theme) applyTheme(state.theme);
   character = state.character; expanded = state.expanded;
   void animator.setMode(character, expanded); layout(); void refresh();
 });
@@ -57,17 +63,31 @@ function options(select, entries, selected) {
 }
 $("project").onchange = () => api.select({ projectId: $("project").value, specKey: "current" });
 $("spec").onchange = () => api.select({ projectId: $("project").value, specKey: $("spec").value });
+$("open-folder").onclick = () => { if (view?.project?.id) void api.openTool(view.project.id, "folder").catch(() => {}); };
+$("open-cmd").onclick = () => { if (view?.project?.id) void api.openTool(view.project.id, "cmd").catch(() => {}); };
 function render(next) {
   view = next;
+  const hasProject = Boolean(next.project?.id);
+  $("open-folder").disabled = !hasProject;
+  $("open-cmd").disabled = !hasProject;
   options($("project"), next.projects.map(project => [project.id, project.name]), next.project?.id);
   options($("spec"), next.scopes, next.selectionKey);
   $("spec").title = next.spec?.file ?? "";
-  $("progress-label").textContent = next.spec ? `${next.completed} / ${next.total} 已收口 · ${next.accepted} 已验收` : "在主控会话登记 Spec 后查看进展";
+  const plannedCount = next.plannedCount ?? 0;
+  $("progress-label").textContent = next.spec
+    ? (plannedCount
+      ? `已派 ${next.completed} / ${next.total} 收口 · 验收 ${next.accepted} · 规划 ${plannedCount}`
+      : `${next.completed} / ${next.total} 已收口 · ${next.accepted} 已验收`)
+    : "在主控会话登记 Spec 后查看进展";
   $("percentage").replaceChildren(document.createTextNode(String(next.percent)), element("span", "%"));
   $("progress-fill").style.width = next.percent + "%";
   $("progress-accepted").style.width = (next.total ? Math.round(next.accepted / next.total * 100) : 0) + "%";
   $("ring").style.setProperty("--p", next.percent);
-  $("caption").textContent = next.spec ? `${next.percent}% · ${next.completed}/${next.total} 票` : "LingFlow";
+  $("caption").textContent = next.spec
+    ? (plannedCount
+      ? `${next.percent}% · 已派 ${next.total} / 规划 ${plannedCount}`
+      : `${next.percent}% · ${next.completed}/${next.total} 票`)
+    : "LingFlow";
   const signature = JSON.stringify(next.groups);
   if (signature !== groupSignature) {
     groupSignature = signature;
@@ -75,7 +95,12 @@ function render(next) {
       const container = $(group.id).querySelector(".tickets"), scroll = container.scrollTop;
       const open = new Set([...container.querySelectorAll("details[open]")].map(node => node.dataset.id));
       const retired = group.tickets.filter(ticket => ticket.retired).length;
-      $(group.id).querySelector("h2 b").textContent = retired ? `${group.tickets.length - retired} · 历史 ${retired}` : group.tickets.length;
+      const plannedInGroup = group.tickets.filter(ticket => ticket.planned).length;
+      $(group.id).querySelector("h2 b").textContent = retired
+        ? `${group.tickets.length - retired} · 历史 ${retired}`
+        : plannedInGroup
+          ? `${group.tickets.length - plannedInGroup} · 规划 ${plannedInGroup}`
+          : group.tickets.length;
       container.replaceChildren(...group.tickets.map(ticket => {
         const card = element("details", "", "ticket" + (ticket.retired ? " retired" : "")); card.dataset.id = ticket.id; card.dataset.state = ticket.state; card.open = open.has(ticket.id);
         const summary = element("summary", ""), top = element("div", "", "ticket-top");

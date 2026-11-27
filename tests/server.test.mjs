@@ -196,3 +196,39 @@ test("controller gets a quiet startup card and the turn rule when reading contex
   assert.equal((await call("controller", "list")).tasks[0].id, dispatch.taskId);
   assert.deepEqual(await heartbeat(), []);
 });
+
+test("open-project-tool validates authorization, project id and tool", async (t) => {
+  mkdirSync(".validation", { recursive: true });
+  const dataDir = mkdtempSync(path.resolve(".validation", "open-tool-"));
+  const opened = [];
+  const app = await startServer({
+    dataDir,
+    port: 0,
+    openProjectTool(root, tool) {
+      if (!["folder", "cmd"].includes(tool)) throw Error("未知项目工具");
+      opened.push({ root, tool });
+      return { ok: true };
+    },
+  });
+  t.after(() => app.close());
+  const base = "http://127.0.0.1:" + app.port;
+  const post = (route, token, body = {}) =>
+    fetch(base + route, {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const created = await (await post("/api/ui/call", app.uiToken, {
+    command: "createProject",
+    operationId: "p-tool",
+    args: { name: "工具测试", root: dataDir },
+  })).json();
+  assert.equal((await post("/api/ui/open-project-tool", "bad", { projectId: created.id, tool: "folder" })).status, 401);
+  assert.equal((await post("/api/ui/open-project-tool", app.uiToken, { projectId: "missing", tool: "folder" })).status, 400);
+  assert.equal((await post("/api/ui/open-project-tool", app.uiToken, { projectId: created.id, tool: "powershell" })).status, 400);
+  const r1 = await post("/api/ui/open-project-tool", app.uiToken, { projectId: created.id, tool: "folder" });
+  const r2 = await post("/api/ui/open-project-tool", app.uiToken, { projectId: created.id, tool: "cmd" });
+  assert.equal(r1.status, 200);
+  assert.equal(r2.status, 200);
+  assert.deepEqual(opened, [{ root: dataDir, tool: "folder" }, { root: dataDir, tool: "cmd" }]);
+});

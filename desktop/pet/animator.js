@@ -88,10 +88,16 @@ export class PetAnimator {
       const context = this.canvas.getContext("2d"); context.setTransform(ratio, 0, 0, ratio, 0, 0); context.clearRect(0, 0, 184, 170);
       context.imageSmoothingEnabled = true; context.imageSmoothingQuality = "high";
       const subject = crop.subject ?? { centerX: crop.x + crop.width / 2, bottom: crop.y + crop.height, height: crop.height };
-      const scale = 146 / subject.height;
+      const scale = 128 / (this.character?.referenceHeight ?? subject.height);
+      const dx = 92 + (crop.x - subject.centerX) * scale;
+      let dy = 162 + (crop.y - subject.bottom) * scale;
+      const subjTop = dy + (subject.bottom - subject.height - crop.y) * scale;
+      const subjBottom = dy + (subject.bottom - crop.y) * scale;
+      if (subjTop < 0) dy -= subjTop;
+      else if (subjBottom > 170) dy -= subjBottom - 170;
       context.drawImage(bitmap, position.frame % animation.columns * animation.frameWidth + crop.x,
         Math.floor(position.frame / animation.columns) * animation.frameHeight + crop.y, crop.width, crop.height,
-        92 + (crop.x - subject.centerX) * scale, 162 + (crop.y - subject.bottom) * scale, crop.width * scale, crop.height * scale);
+        dx, dy, crop.width * scale, crop.height * scale);
       this.canvas.dataset.subjectHeight = String(Math.round(subject.height * scale));
       this.canvas.dataset.animation = animation.id;
       this.canvas.dataset.character = this.current.character;

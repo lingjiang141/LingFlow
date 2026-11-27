@@ -137,8 +137,9 @@ test("unproven original red basis requires an explicit current HEAD and a real r
   assert.equal(expand.redBaselinePending, true);
   assert.throws(() => f.call("Dev", "check", { taskId: f.taskId, checkId: "red" }), /NEW-TEST.*red.*scheduleVersion=1.*diagnoseTask/);
   const diagnosis = f.call("Lead", "diagnoseTask", { taskId: f.taskId });
-  assert.deepEqual(diagnosis.actionRequired.requiredParameters, ["reason"]);
-  assert.equal(diagnosis.actionRequired.args.redBaselineHead, baseline.head);
+  assert.deepEqual(diagnosis.actionRequired.requiredParameters, ["redBaselineHead", "reason"]);
+  assert.equal(diagnosis.actionRequired.args.redBaselineHead, undefined);
+  assert.equal(diagnosis.actionRequired.candidateHeads.currentHead, baseline.head);
   f.call("Dev", "yieldForSchedule", { taskId: f.taskId, reason: "stop for explicit red snapshot" });
   f.put("implementation.cjs", "module.exports = 'owned changes';");
   const refresh = redBaselineHead => f.call("Lead", "reviseSchedule", { taskId: f.taskId, reason: "confirm current clean implementation",

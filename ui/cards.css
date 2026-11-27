@@ -41,9 +41,10 @@
   outline-offset: 1px;
 }
 
-/* 图标浮在右上角：给标题留出右侧空间，长成员名不会钻到按钮下面。 */
-.role.has-appearance > h3 {
-  padding-right: 24px;
+/* 图标浮在右上角：给标题行留出右侧空间，长成员名和状态灯不会钻到按钮下面。 */
+.role.has-appearance > h3,
+.role.has-appearance > .role-head {
+  padding-right: 26px;
 }
 
 /* 卡片有背景图时，图标要落在半透明垫片上：亮图/暗图上都能看清。 */
@@ -54,7 +55,7 @@
   backdrop-filter: blur(6px) saturate(1.08);
 }
 
-html:not([data-theme="dark"]) .role.has-media > .card-appearance {
+html:not([data-theme="dark"]):not([data-theme="crimson"]) .role.has-media > .card-appearance {
   background: color-mix(in srgb, var(--lf-surface) 82%, transparent);
 }
 
@@ -64,7 +65,12 @@ html:not([data-theme="dark"]) .role.has-media > .card-appearance {
   --role-image-ink: #f8fafc;
 }
 
-html:not([data-theme="dark"]) .role.has-media {
+html[data-theme="crimson"] .role.has-media {
+  --role-image-scrim: linear-gradient(100deg, rgb(14 7 10 / 92%), rgb(18 9 13 / 74%) 50%, rgb(14 7 10 / 24%));
+  --role-image-ink: #f7ece8;
+}
+
+html:not([data-theme="dark"]):not([data-theme="crimson"]) .role.has-media {
   --role-image-scrim: linear-gradient(100deg, rgb(248 250 252 / 94%), rgb(248 250 252 / 76%) 48%, rgb(248 250 252 / 22%));
   --role-image-ink: #172033;
 }
@@ -82,10 +88,17 @@ html:not([data-theme="dark"]) .role.has-media {
 .role.has-media > .card-media { z-index: -1; }
 .role.has-media { isolation: isolate; }
 .role.has-media > h3,
+.role.has-media > .role-head,
+.role.has-media > .role-meta,
 .role.has-media > small,
 .role.has-media > p {
   color: var(--role-image-ink);
   font-weight: 600;
+}
+
+.role.has-media::before,
+.role.has-media > .card-media {
+  border-radius: inherit;
 }
 
 .role.has-media .role-actions > button:disabled { opacity: 0.76; }
@@ -95,7 +108,7 @@ html:not([data-theme="dark"]) .role.has-media {
   box-shadow: 0 10px 26px rgba(3, 6, 12, 0.24);
 }
 
-html:not([data-theme="dark"]) .role.has-media {
+html:not([data-theme="dark"]):not([data-theme="crimson"]) .role.has-media {
   box-shadow: 0 10px 24px rgba(28, 45, 74, 0.12);
 }
 html[data-wallpaper="1"] .column h3,
@@ -106,8 +119,14 @@ html[data-wallpaper="1"] .task-list > .muted {
 }
 .role.has-media > p,
 .role.has-media > small,
-.role.has-media .role-name {
-  background: color-mix(in srgb, var(--lf-surface) 74%, transparent);
+.role.has-media .role-name,
+.role.has-media .role-dot {
+  background: color-mix(in srgb, var(--lf-surface) 78%, transparent);
   border-radius: 5px;
-  padding: 2px 5px;
+  padding: 2px 6px;
+}
+.role.has-media .role-dot[data-status="idle"],
+.role.has-media .role-dot[data-status="unbound"] {
+  color: var(--role-image-ink);
+}
 }

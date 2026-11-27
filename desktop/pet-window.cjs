@@ -5,6 +5,8 @@ const { pathToFileURL } = require("node:url");
 const { createPetAssets } = require("./pet-assets.cjs");
 const { fitBounds, aroundCenter } = require("./pet-geometry.cjs");
 
+const THEME_IDS = new Set(["dark", "white", "lavender", "sky", "mint", "sugar", "crimson", "citrus"]);
+
 function createDesktopPet(mainWindow, runtime, { directory = app.getPath("userData"), cursor = () => screen.getCursorScreenPoint() } = {}) {
   mkdirSync(directory, { recursive: true });
   const preferencesFile = path.join(directory, "pet.json");
@@ -12,6 +14,7 @@ function createDesktopPet(mainWindow, runtime, { directory = app.getPath("userDa
   try { saved = JSON.parse(readFileSync(preferencesFile, "utf8")); } catch {}
   const assets = createPetAssets(path.join(directory, "pet-cache"));
   let character = assets.catalog.characters.some(item => item.id === saved.character) ? saved.character : "dsh";
+  let theme = THEME_IDS.has(saved.theme) ? saved.theme : "dark";
   let selection = saved.selection ?? {}, expanded = false, dragging, regions = [], disposed = false, ignore;
   const defaultBounds = area => fitBounds({ x: area.x + area.width - 220, y: area.y + area.height - 220, width: 184, height: 184 }, area);
   let restBounds = Number.isFinite(saved.x) && Number.isFinite(saved.y)
@@ -22,10 +25,10 @@ function createDesktopPet(mainWindow, runtime, { directory = app.getPath("userDa
     webPreferences: { preload: path.join(__dirname, "pet-preload.cjs"), nodeIntegration: false, contextIsolation: true, sandbox: true, backgroundThrottling: false } });
   const model = import(pathToFileURL(path.join(__dirname, "../ui/pet-model.js")));
   const save = () => {
-    writeFileSync(preferencesFile + ".tmp", JSON.stringify({ character, selection, x: restBounds.x, y: restBounds.y }));
+    writeFileSync(preferencesFile + ".tmp", JSON.stringify({ character, theme, selection, x: restBounds.x, y: restBounds.y }));
     renameSync(preferencesFile + ".tmp", preferencesFile);
   };
-  const publish = () => { if (!disposed) pet.webContents.send("lingflow-pet:change", { character, expanded }); };
+  const publish = () => { if (!disposed) pet.webContents.send("lingflow-pet:change", { character, theme, expanded }); };
   const validSelection = value => value && typeof value === "object" && typeof value.projectId === "string" &&
     value.projectId.length < 200 && (value.specKey == null || typeof value.specKey === "string" && value.specKey.length < 2000);
   const pick = value => { if (validSelection(value)) { selection = { projectId: value.projectId, specKey: value.specKey ?? "current" }; save(); publish(); } };
@@ -63,7 +66,7 @@ function createDesktopPet(mainWindow, runtime, { directory = app.getPath("userDa
     const callback = (event, ...args) => { if (!disposed && event.sender === sender()) action(...args); };
     ipcMain.on(channel, callback); listeners.push([channel, callback]);
   };
-  handle("initialize", () => ({ catalog: assets.catalog, character, expanded }));
+  handle("initialize", () => ({ catalog: assets.catalog, character, theme, expanded }));
   handle("image", (id, animation) => assets.image(id, animation));
   handle("snapshot", async () => {
     let snapshot;
@@ -77,9 +80,29 @@ function createDesktopPet(mainWindow, runtime, { directory = app.getPath("userDa
     }
     return (await model).petProgress(snapshot, selection);
   });
+  handle("open-tool", async (projectId, tool) => {
+    if (typeof projectId !== "string" || !["folder", "cmd"].includes(tool)) throw Error("无效项目工具参数");
+    if (runtime.workflow) {
+      const snapshot = await runtime.workflow.snapshot();
+      const project = snapshot.projects.find(item => item.id === projectId);
+      if (!project) throw Error("未找到对应项目");
+      const { defaultOpenProjectTool } = await import(pathToFileURL(path.join(__dirname, "../src/project-tool.mjs")));
+      return defaultOpenProjectTool(project.root, tool);
+    }
+    const response = await fetch(`http://127.0.0.1:${runtime.port}/api/ui/open-project-tool`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + runtime.uiToken },
+      body: JSON.stringify({ projectId, tool }),
+      signal: AbortSignal.timeout(4000),
+    });
+    const value = await response.json().catch(() => ({}));
+    if (!response.ok) throw Error(value.error || "操作失败");
+    return value;
+  });
   handle("expanded", setExpanded);
   listen("pick", value => { if (validSelection(value)) { pick(value); mainWindow.webContents.send("lingflow-pet:selection-changed", selection); } });
   listen("selection", pick, () => mainWindow.webContents);
+  listen("theme", value => { if (THEME_IDS.has(value) && value !== theme) { theme = value; save(); publish(); } }, () => mainWindow.webContents);
   listen("show", () => show({ useDefaultPosition: true }), () => mainWindow.webContents);
   listen("menu", () => menu().popup({ window: pet }));
   listen("regions", value => { if (Array.isArray(value) && value.length <= 10) regions = value.filter(rect => [rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)); });

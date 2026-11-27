@@ -66,6 +66,7 @@ else {
         minWidth: 880,
         minHeight: 650,
         title: "LingFlow",
+        icon: path.join(__dirname, "tray.ico"),
         backgroundColor: "#10141d",
         autoHideMenuBar: true,
         webPreferences: {
@@ -193,15 +194,23 @@ else {
             const feedback = () => roleCard().querySelector('.role-feedback')?.textContent;
             (await waitFor(() => button('开启角色'))).click();
             const enablePending = feedback();
-            const silentResume = await waitFor(() => feedback()?.includes('本轮无责任') && feedback());
-            (await waitFor(() => button('暂停新投递'))).click();
+            const silentResume = await waitFor(() => button('暂停投递')?.title);
+            (await waitFor(() => button('暂停投递'))).click();
             const pausePending = feedback();
-            const paused = await waitFor(() => feedback()?.includes('已保留原任务') && feedback());
-            (await waitFor(() => button('解绑会话'))).click();
+            const paused = await waitFor(() => button('开启角色')?.title);
+            const clickMenuItem = async (label) => {
+              const target = await waitFor(() => {
+                const menu = roleCard()?.querySelector('.role-menu');
+                if (menu && menu.hidden) roleCard()?.querySelector('.role-more-btn')?.click();
+                return button(label);
+              });
+              target.click();
+            };
+            await clickMenuItem('解绑会话');
             const unbindConfirmation = document.getElementById('modal').innerText;
             document.getElementById('cancel').click();
-            const cancelKeptBinding = Boolean(button('解绑会话'));
-            button('解绑会话').click();
+            const cancelKeptBinding = Boolean(roleCard()?.querySelector('.role-more-btn') && [...roleCard().querySelectorAll('.role-menu button')].some((item) => item.textContent === '解绑会话'));
+            await clickMenuItem('解绑会话');
             document.getElementById('modal-form').requestSubmit();
             await waitFor(() => !document.getElementById('modal').open && roleCard().textContent.includes('等待会话绑定'));
             const canEnableAfterUnbind = Boolean(button('开启角色'));

@@ -39,17 +39,22 @@ test("a superseding ticket with an explicit red uses the predecessor's original 
   assert.equal((await f.run("red", false, "Dev", nextId)).state, "passed");
 });
 
-test("red exit zero points to a controller recovery on the assigned ticket", async t => {
+test("red exit zero on inherited edits requires the controller to select the red commit", async t => {
   const f = await fixture(t, "AssertionError", { existingTest: assertion,
     ownedDirty: { "implementation.cjs": "module.exports = 'new';" } });
   const red = await f.run("red");
   assert.equal(red.receipt.exitCode, 0);
   assert.match(red.error, /退出码 0.*取红/);
-  assert.equal(red.nextAction?.args.realignRedBaseline, true);
+  assert.equal(red.nextAction?.command, "diagnoseTask");
   const before = task(f);
   const finding = diagnose(f);
-  assert.equal(finding.nextAction?.args.realignRedBaseline, true, finding.reason);
-  assert.equal(f.call("Lead", finding.nextAction.command, finding.nextAction.args).state, "applied");
+  assert.equal(finding.classification, "red-exit-zero");
+  assert.deepEqual(finding.reference, { command: "checkEvidence", args: { jobId: red.id } });
+  const action = finding.actionRequired;
+  assert.deepEqual(action.requiredParameters, ["redBaselineHead", "reason"]);
+  assert.equal(action.args.redBaselineHead, undefined);
+  assert.equal(f.call("Lead", action.command, { ...action.args, redBaselineHead: before.baseline.head,
+    reason: "已核对准入提交仅包含原行为" }).state, "applied");
   assert.equal(task(f).state, "assigned");
   assert.deepEqual(task(f).baseline, before.baseline);
   f.put("implementation.cjs", "module.exports = 'old';");

@@ -49,6 +49,7 @@ test("导入的图片复制到项目文件夹内，列表、读取、删除闭�
   assert.equal((await fetch(base + "/")).status, 200);
   assert.equal((await fetch(base + "/app.js")).status, 200);
   assert.equal((await fetch(base + "/style.css")).status, 200);
+  assert.equal((await fetch(base + "/logo.png")).status, 200);
   // 静态资源仍然只认 ui/ 根目录、白名单扩展名。
   assert.equal((await fetch(base + "/nonexistent.js")).status, 404);
   assert.equal((await fetch(base + "/package.json")).status, 404);

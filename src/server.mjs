@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { startWorkflowRuntime } from "./workflow-runtime.mjs";
 import { defaultDataDir, readConfig } from "./config.mjs";
 import { createAppearanceLibrary, defaultAssetRoot } from "./appearance.mjs";
+import { defaultOpenProjectTool } from "./project-tool.mjs";
 
 export { defaultDataDir };
 
@@ -15,6 +16,8 @@ const STATIC_TYPES = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".svg": "image/svg+xml; charset=utf-8",
+  ".png": "image/png",
+  ".ico": "image/x-icon",
 };
 
 /**
@@ -46,6 +49,7 @@ export async function startServer({
   port,
   uiToken,
   pickProjectDirectory,
+  openProjectTool = defaultOpenProjectTool,
   assetRoot = defaultAssetRoot,
 } = {}) {
   // The shared config owns both tokens, so every entrance (desktop window,
@@ -207,6 +211,12 @@ export async function startServer({
         result = actions[body.action]();
       } else if (route === "/api/ui/pick-project-directory" && pickProjectDirectory)
         result = { directory: await pickProjectDirectory() };
+      else if (route === "/api/ui/open-project-tool") {
+        const snapshot = await workflow.snapshot();
+        const project = snapshot.projects.find((p) => p.id === body?.projectId);
+        if (!project) throw Error("未找到对应项目");
+        result = await openProjectTool(project.root, body?.tool);
+      }
       else if (route === "/api/bridge/catalog") result = workflow.catalog();
       else if (route === "/api/bridge/bindings") result = workflow.bridgeBindings();
       else if (route === "/api/bridge/request") result = workflow.request(body);

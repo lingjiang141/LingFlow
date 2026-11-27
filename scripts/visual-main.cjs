@@ -155,8 +155,8 @@ else {
       // 1) 深色默认
       await capture("01-dark");
 
-      // 2) 三个浅色预设主题
-      for (const theme of ["white", "lavender", "sky"]) {
+      // 2) 七套预设主题（含浅色、薄荷极光、砂糖粉蓝、血色暗夜、柑橘暖阳）
+      for (const theme of ["white", "lavender", "sky", "mint", "sugar", "crimson", "citrus"]) {
         await execute(`window.__lingflowAppearance.setTheme(${JSON.stringify(theme)})`);
         await wait(340);
         await capture("02-theme-" + theme);

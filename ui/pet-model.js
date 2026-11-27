@@ -11,7 +11,7 @@ export function petProgress(snapshot, selection = {}) {
   const projects = snapshot.projects.map(({ id, name }) => ({ id, name }));
   const chosenProject = projects.find(project => project.id === selection.projectId);
   const project = chosenProject ?? projects[0];
-  const board = specBoard(snapshot.tasks ?? [], project?.id, !chosenProject ? "current" : selection.specKey);
+  const board = specBoard(snapshot.tasks ?? [], project?.id, !chosenProject ? "current" : selection.specKey, snapshot.plannedTickets ?? []);
   const groups = ["closed", "active", "waiting"].map(id => ({ id, tickets: [] }));
   let completed = 0, accepted = 0, total = 0;
   for (const task of board.selected?.tasks ?? (board.selectionKey === "all" ? board.tasks : [])) {
@@ -35,10 +35,29 @@ export function petProgress(snapshot, selection = {}) {
     };
     group.tickets.sort((a, b) => priority(a) - priority(b) || a.key.localeCompare(b.key, "zh-CN", { numeric: true }));
   }
+  const plannedTickets = board.selected
+    ? (board.selected.plannedTickets ?? [])
+    : board.selectionKey === "all"
+      ? (board.plannedTickets ?? [])
+      : [];
+  for (const item of plannedTickets) {
+    groups[2].tickets.push({
+      id: `planned:${item.requirementId}:${item.key}`,
+      key: item.key,
+      title: item.title ?? item.key,
+      state: "planned",
+      label: item.requirementClosed ? "该需求已收口 · 未派发" : "已规划 · 待派发",
+      blurb: item.dependsOn?.length ? `前置：${item.dependsOn.join("、")}` : "",
+      risk: item.risk ?? "medium",
+      planned: true,
+      requirementClosed: Boolean(item.requirementClosed),
+      dependsOn: item.dependsOn ?? [],
+    });
+  }
   return { projects, project, specs: board.specs.map(({ key, file, digest }) => ({ key, file, digest })),
-    cycles: board.cycles.map(({ key, file, versions, tasks }) => ({ key, file, versionCount: versions.length, ticketCount: tasks.length })),
+    cycles: board.cycles.map(({ key, file, versions, tasks, plannedTickets: cyclePlanned }) => ({ key, file, versionCount: versions.length, ticketCount: tasks.length, plannedCount: cyclePlanned?.length ?? 0 })),
     scopes: specChoices(board), selectionKey: board.selectionKey,
     spec: board.selected ? { key: board.selected.key, kind: board.selected.kind, file: board.selected.file, digest: board.selected.digest } :
       board.selectionKey === "all" ? { key: "all", kind: "all", file: "全部项目任务" } : null,
-    total, completed, accepted, percent: total ? Math.round(completed / total * 100) : 0, groups };
+    total, completed, accepted, plannedCount: plannedTickets.length, plannedTickets, percent: total ? Math.round(completed / total * 100) : 0, groups };
 }

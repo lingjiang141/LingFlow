@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { specBoard, ticketColumns } from "../ui/spec-board.js";
+import { specBoard, specChoices, ticketColumns } from "../ui/spec-board.js";
 
 const ticket = (id, digest, projectId = "a", state = "queued", risk = "medium") => ({
   id, projectId, state, risk, ...(digest ? { sources: { spec: { file: "spec.md", digest } } } : {}),
@@ -53,4 +53,24 @@ test("a Spec cycle shows its original five tickets and all three additions acros
   assert.equal(specBoard(tasks.slice(0,-1),'a').tasks.length,8);
   assert.equal(specBoard(tasks,'a',JSON.stringify(['spec.md','v2'])).tasks.length,2);
   assert.equal(tasks[1].sources.spec.digest,'v1','The frozen source remains unchanged');
+});
+
+test("planned tickets appear on the board without entering tasks or distorting cycle counts", () => {
+  const planned = [
+    { key: "R35-01", projectId: "a", requirementId: "req1", title: "第一张规划票", risk: "low", specSource: { file: "spec.md", digest: "v1" }, dependsOn: [] },
+    { key: "R35-02", projectId: "a", requirementId: "req1", title: "第二张规划票", risk: "high", specSource: { file: "spec.md", digest: "v2" }, dependsOn: ["R35-01"], requirementClosed: true },
+    { key: "OTHER-01", projectId: "b", requirementId: "req2", title: "其他项目", risk: "medium", specSource: { file: "other.md", digest: "v9" } },
+  ];
+  const emptyDispatch = specBoard([], "a", "current", planned);
+  assert.equal(emptyDispatch.tasks.length, 0);
+  assert.equal(emptyDispatch.plannedTickets.map(p => p.key).join(","), "R35-01,R35-02");
+  assert.equal(emptyDispatch.current.file, "spec.md");
+  assert.equal(specChoices(emptyDispatch)[0][1], "本轮全部票（含追加）· 0 张（待派发 2）");
+
+  const withDispatched = specBoard([ticket("t1", "v1", "a", "accepted", "low")], "a", JSON.stringify(["spec.md", "v2"]), planned);
+  assert.equal(withDispatched.tasks.length, 0);
+  assert.deepEqual(withDispatched.plannedTickets.map(p => p.key), ["R35-02"]);
+  const allView = specBoard([ticket("t1", "v1", "a", "accepted", "low")], "a", "all", planned);
+  assert.equal(allView.tasks.length, 1);
+  assert.equal(allView.plannedTickets.length, 2);
 });

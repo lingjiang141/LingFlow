@@ -54,19 +54,6 @@
           "fps": 12
         },
         {
-          "id": "中秋赏月吃月饼",
-          "name": "中秋赏月吃月饼",
-          "source": "pets/dsh/spritesheet/中秋赏月吃月饼.webp",
-          "sha": "fdb268909316bc3502d671c7074ff2b7aa717689",
-          "size": 990702,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
           "id": "优雅女仆舞",
           "name": "优雅女仆舞",
           "source": "pets/dsh/spritesheet/优雅女仆舞.webp",
@@ -202,19 +189,6 @@
           "source": "pets/dsh/spritesheet/凭空生花.webp",
           "sha": "6c22fa569671c60b6ce4986925e818c83b6eafe3",
           "size": 995974,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
-          "id": "动物环绕",
-          "name": "动物环绕",
-          "source": "pets/dsh/spritesheet/动物环绕.webp",
-          "sha": "f1a43c9b276b04fe1c7715b157090cf9ffeefb6e",
-          "size": 991682,
           "frameWidth": 640,
           "frameHeight": 360,
           "columns": 8,
@@ -574,50 +548,11 @@
           "fps": 12
         },
         {
-          "id": "吹气球",
-          "name": "吹气球",
-          "source": "pets/dsh/spritesheet/吹气球.webp",
-          "sha": "406c38180f186d60b551cb712bc226ede73915dd",
-          "size": 990874,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
-          "id": "吹笛子",
-          "name": "吹笛子",
-          "source": "pets/dsh/spritesheet/吹笛子.webp",
-          "sha": "000c1324649d86dbff165ae9355829d22ca54d81",
-          "size": 992774,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
           "id": "哈欠连天",
           "name": "哈欠连天",
           "source": "pets/dsh/spritesheet/哈欠连天.webp",
           "sha": "3de8113b31219d072d8bbb0245ab4b636b3e512f",
           "size": 990694,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
-          "id": "大口吃零食",
-          "name": "大口吃零食",
-          "source": "pets/dsh/spritesheet/大口吃零食.webp",
-          "sha": "88e6adc6af09784809dead43faed58d2e0162c25",
-          "size": 990784,
           "frameWidth": 640,
           "frameHeight": 360,
           "columns": 8,
@@ -860,19 +795,6 @@
           "fps": 12
         },
         {
-          "id": "放孔明灯",
-          "name": "放孔明灯",
-          "source": "pets/dsh/spritesheet/放孔明灯.webp",
-          "sha": "031ef33ae6e363ddb90d2108b81fdc8e97e80b8e",
-          "size": 989694,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
           "id": "放河灯",
           "name": "放河灯",
           "source": "pets/dsh/spritesheet/放河灯.webp",
@@ -886,37 +808,11 @@
           "fps": 12
         },
         {
-          "id": "放烟花",
-          "name": "放烟花",
-          "source": "pets/dsh/spritesheet/放烟花.webp",
-          "sha": "7a6d656de88690374e4e455fda8be02f74fa322e",
-          "size": 987230,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
           "id": "整体换装试色",
           "name": "整体换装试色",
           "source": "pets/dsh/spritesheet/整体换装试色.webp",
           "sha": "48ad23a895f6a2a62669562dfd631b3d5884d477",
           "size": 994228,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
-          "id": "是啊，吃什么",
-          "name": "是啊，吃什么",
-          "source": "pets/dsh/spritesheet/是啊，吃什么.webp",
-          "sha": "b3553c8158743207401acf059cb4c8c39faf092b",
-          "size": 987602,
           "frameWidth": 640,
           "frameHeight": 360,
           "columns": 8,
@@ -943,19 +839,6 @@
           "source": "pets/dsh/spritesheet/涮火锅.webp",
           "sha": "88e2842237d4cd90affdec6833066ce60bc5156d",
           "size": 996088,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
-          "id": "深度思考碎碎念",
-          "name": "深度思考碎碎念",
-          "source": "pets/dsh/spritesheet/深度思考碎碎念.webp",
-          "sha": "d9d8da36b341d5a69d65310774e1c5ea3799cb21",
-          "size": 997526,
           "frameWidth": 640,
           "frameHeight": 360,
           "columns": 8,
@@ -1034,19 +917,6 @@
           "source": "pets/dsh/spritesheet/照镜子.webp",
           "sha": "f8f2b6d0928af89eb2d6ce10ad82ecafe2f9c898",
           "size": 993184,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
-          "id": "玩水枪",
-          "name": "玩水枪",
-          "source": "pets/dsh/spritesheet/玩水枪.webp",
-          "sha": "4c315f4107c6141c8fc202463286459452faa8ee",
-          "size": 990436,
           "frameWidth": 640,
           "frameHeight": 360,
           "columns": 8,
@@ -1185,19 +1055,6 @@
           "fps": 12
         },
         {
-          "id": "蝴蝶蜜蜂环绕头顶开花",
-          "name": "蝴蝶蜜蜂环绕头顶开花",
-          "source": "pets/dsh/spritesheet/蝴蝶蜜蜂环绕头顶开花.webp",
-          "sha": "2ac1984d57a8d7b847f73a51988b7ce6c4f1c0ac",
-          "size": 989522,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
           "id": "螃蟹走路",
           "name": "螃蟹走路",
           "source": "pets/dsh/spritesheet/螃蟹走路.webp",
@@ -1216,19 +1073,6 @@
           "source": "pets/dsh/spritesheet/被吓一跳.webp",
           "sha": "7d0fd85994c7b26ccbaca96d044172213d4123aa",
           "size": 995612,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
-          "id": "被落叶淹没",
-          "name": "被落叶淹没",
-          "source": "pets/dsh/spritesheet/被落叶淹没.webp",
-          "sha": "68cbbc08380b4d66e7570bb80bbfb991ff8ff2ac",
-          "size": 993140,
           "frameWidth": 640,
           "frameHeight": 360,
           "columns": 8,
@@ -1327,7 +1171,8 @@
           "frameCount": 120,
           "fps": 12
         }
-      ]
+      ],
+      "referenceHeight": 228
     },
     {
       "id": "claude",
@@ -2590,19 +2435,6 @@
           "fps": 12
         },
         {
-          "id": "放孔明灯",
-          "name": "放孔明灯",
-          "source": "pets/claude/spritesheet/放孔明灯.webp",
-          "sha": "75aea067204b9833737ce4939fe0285e1d6422c2",
-          "size": 1955906,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
           "id": "放河灯",
           "name": "放河灯",
           "source": "pets/claude/spritesheet/放河灯.webp",
@@ -2876,19 +2708,6 @@
           "fps": 12
         },
         {
-          "id": "蝴蝶蜜蜂环绕头顶开花",
-          "name": "蝴蝶蜜蜂环绕头顶开花",
-          "source": "pets/claude/spritesheet/蝴蝶蜜蜂环绕头顶开花.webp",
-          "sha": "dd2d29e8885f5e2293c1d6347a661352c5f5aace",
-          "size": 1995326,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
           "id": "螃蟹走路",
           "name": "螃蟹走路",
           "source": "pets/claude/spritesheet/螃蟹走路.webp",
@@ -2920,19 +2739,6 @@
           "source": "pets/claude/spritesheet/被落叶淹没.webp",
           "sha": "2eef414515639ae0b86c06752bea76c45c559c5a",
           "size": 1973174,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
-          "id": "被落叶淹没v2",
-          "name": "被落叶淹没v2",
-          "source": "pets/claude/spritesheet/被落叶淹没v2.webp",
-          "sha": "cc9213d4057c13a39d83eb07e81739dfb9e28199",
-          "size": 1972822,
           "frameWidth": 640,
           "frameHeight": 360,
           "columns": 8,
@@ -3499,7 +3305,8 @@
           "frameCount": 120,
           "fps": 12
         }
-      ]
+      ],
+      "referenceHeight": 248
     },
     {
       "id": "gpt",
@@ -4515,19 +4322,6 @@
           "fps": 12
         },
         {
-          "id": "蝴蝶蜜蜂环绕头顶开花",
-          "name": "蝴蝶蜜蜂环绕头顶开花",
-          "source": "pets/gpt/spritesheet/蝴蝶蜜蜂环绕头顶开花.webp",
-          "sha": "c5686d0492f53b4ed3a2491912e931be5d8a1ef5",
-          "size": 1498226,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
           "id": "袋空如洗",
           "name": "袋空如洗",
           "source": "pets/gpt/spritesheet/袋空如洗.webp",
@@ -4709,7 +4503,8 @@
           "frameCount": 120,
           "fps": 12
         }
-      ]
+      ],
+      "referenceHeight": 264
     },
     {
       "id": "gemini",
@@ -5529,19 +5324,6 @@
           "fps": 12
         },
         {
-          "id": "放孔明灯v2",
-          "name": "放孔明灯v2",
-          "source": "pets/gemini/spritesheet/放孔明灯v2.webp",
-          "sha": "fe378bae772a5264b9fb239487a95e294bcf8255",
-          "size": 1998712,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
           "id": "放河灯v2",
           "name": "放河灯v2",
           "source": "pets/gemini/spritesheet/放河灯v2.webp",
@@ -5880,19 +5662,6 @@
           "fps": 12
         },
         {
-          "id": "蝴蝶蜜蜂环绕头顶开花",
-          "name": "蝴蝶蜜蜂环绕头顶开花",
-          "source": "pets/gemini/spritesheet/蝴蝶蜜蜂环绕头顶开花.webp",
-          "sha": "40573fd88302d2d9cbad68344def7f102c8eb524",
-          "size": 1976488,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
           "id": "螃蟹走路",
           "name": "螃蟹走路",
           "source": "pets/gemini/spritesheet/螃蟹走路.webp",
@@ -5911,19 +5680,6 @@
           "source": "pets/gemini/spritesheet/被吓一跳.webp",
           "sha": "5b9b552729a64cc535ce928a6b34c8b276879d6e",
           "size": 1988458,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
-          "id": "被落叶淹没",
-          "name": "被落叶淹没",
-          "source": "pets/gemini/spritesheet/被落叶淹没.webp",
-          "sha": "b5ac027772aa51b4b179537443a7c450ea260731",
-          "size": 1995740,
           "frameWidth": 640,
           "frameHeight": 360,
           "columns": 8,
@@ -6022,7 +5778,8 @@
           "frameCount": 120,
           "fps": 12
         }
-      ]
+      ],
+      "referenceHeight": 260
     },
     {
       "id": "grok",
@@ -6596,19 +6353,6 @@
           "fps": 12
         },
         {
-          "id": "吹气球",
-          "name": "吹气球",
-          "source": "pets/grok/spritesheet/吹气球.webp",
-          "sha": "d9a1a3b20cff8ce69764a90c50b9cc9cff8edd37",
-          "size": 2092980,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
           "id": "吹笛子",
           "name": "吹笛子",
           "source": "pets/grok/spritesheet/吹笛子.webp",
@@ -6640,19 +6384,6 @@
           "source": "pets/grok/spritesheet/堆雪人.webp",
           "sha": "35cbce57fc362db418936215a00f9e2e28ed9e8a",
           "size": 2091532,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
-          "id": "大口吃零食",
-          "name": "大口吃零食",
-          "source": "pets/grok/spritesheet/大口吃零食.webp",
-          "sha": "4a59f5828304e5e027e5efdd1e70be39ea963400",
-          "size": 2083922,
           "frameWidth": 640,
           "frameHeight": 360,
           "columns": 8,
@@ -6934,37 +6665,11 @@
           "fps": 12
         },
         {
-          "id": "放孔明灯",
-          "name": "放孔明灯",
-          "source": "pets/grok/spritesheet/放孔明灯.webp",
-          "sha": "02d1a9f21f16178258614c323e7aa55902741ef9",
-          "size": 2079866,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
           "id": "放河灯",
           "name": "放河灯",
           "source": "pets/grok/spritesheet/放河灯.webp",
           "sha": "6941a155111741bc15716f3531122b81a35d33b6",
           "size": 2085720,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
-          "id": "放烟花",
-          "name": "放烟花",
-          "source": "pets/grok/spritesheet/放烟花.webp",
-          "sha": "6880741d870294d9104ca9e82676abc18ff3ae43",
-          "size": 2086872,
           "frameWidth": 640,
           "frameHeight": 360,
           "columns": 8,
@@ -7129,19 +6834,6 @@
           "fps": 12
         },
         {
-          "id": "玩水枪",
-          "name": "玩水枪",
-          "source": "pets/grok/spritesheet/玩水枪.webp",
-          "sha": "74e3ebba0e4d045c3494b93c359221e23c774819",
-          "size": 2086500,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
           "id": "玩游戏气急败坏",
           "name": "玩游戏气急败坏",
           "source": "pets/grok/spritesheet/玩游戏气急败坏.webp",
@@ -7259,19 +6951,6 @@
           "fps": 12
         },
         {
-          "id": "蝴蝶蜜蜂环绕头顶开花",
-          "name": "蝴蝶蜜蜂环绕头顶开花",
-          "source": "pets/grok/spritesheet/蝴蝶蜜蜂环绕头顶开花.webp",
-          "sha": "1b7e7c12f44fe2ccb9e92ae8599ca1e8138bda54",
-          "size": 2086358,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
           "id": "螃蟹走路",
           "name": "螃蟹走路",
           "source": "pets/grok/spritesheet/螃蟹走路.webp",
@@ -7290,19 +6969,6 @@
           "source": "pets/grok/spritesheet/被吓一跳.webp",
           "sha": "a8ae9a1252f367b30bb52b8d5e91ff8d3dc8c852",
           "size": 2079588,
-          "frameWidth": 640,
-          "frameHeight": 360,
-          "columns": 8,
-          "rows": 15,
-          "frameCount": 120,
-          "fps": 12
-        },
-        {
-          "id": "被落叶淹没",
-          "name": "被落叶淹没",
-          "source": "pets/grok/spritesheet/被落叶淹没.webp",
-          "sha": "a713acf77f0600e1a83e31f59ef12fa2440ec26c",
-          "size": 2081562,
           "frameWidth": 640,
           "frameHeight": 360,
           "columns": 8,
@@ -7414,7 +7080,8 @@
           "frameCount": 120,
           "fps": 12
         }
-      ]
+      ],
+      "referenceHeight": 232
     }
   ]
 }

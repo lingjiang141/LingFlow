@@ -2,19 +2,678 @@
 :root {
   color-scheme:dark;
   font-family:"Segoe UI","Microsoft YaHei",sans-serif;
-  color:#ececf7;
+  color:#eef0fa;
   font-size:12px;
-  --ink:#ecebf7;
-  --ink-dim:#a7a6bf;
-  --ink-mute:#7d7c96;
+  --ink:#eef0fa;
+  --ink-dim:#abb2ca;
+  --ink-mute:#7f87a3;
   --line:#8f89b02e;
+  /* 状态灯专用色：所有主题保持一致 */
   --violet:#b9a4ff;
   --violet-strong:#8f76f0;
   --mint:#8fdcc0;
   --amber:#f0c27f;
   --sky:#8fc3ff;
   --rose:#ff9fa8;
-  --slate:#aeb6cc
+  --slate:#aeb6cc;
+
+  /* 主题表面与文字适配变量（默认 dark） */
+  --theme-accent:#b9a4ff;
+  --focus-ring:#b7a8ff;
+  --surface-glow-a:radial-gradient(120% 75% at 6% 0%,rgba(154,134,248,.16) 0%,rgba(154,134,248,.04) 44%,transparent 74%);
+  --surface-glow-b:radial-gradient(95% 65% at 96% 100%,rgba(116,134,240,.08) 0%,transparent 70%);
+  --surface-base:linear-gradient(152deg,rgba(37,39,62,.96) 0%,rgba(26,28,47,.96) 52%,rgba(18,20,33,.97) 100%);
+  --surface-border:rgba(146,142,190,.28);
+  --surface-rim:rgba(255,255,255,.08);
+  --surface-shadow:0 14px 36px rgba(5,8,18,.44),0 2px 6px rgba(5,8,18,.26);
+  --surface-topline:linear-gradient(90deg,transparent,rgba(185,164,255,.72) 50%,transparent);
+
+  --brand-ink:#cbc2f5;
+  --brand-badge-bg:linear-gradient(135deg,var(--violet),var(--violet-strong));
+  --brand-badge-ink:#17132b;
+  --brand-badge-shadow:0 3px 10px rgba(143,118,240,.34);
+
+  --conn-bg:rgba(143,220,192,.10);
+  --conn-border:rgba(143,220,192,.24);
+  --conn-ink:#9fd7c4;
+  --conn-stale-bg:rgba(240,194,127,.10);
+  --conn-stale-border:rgba(240,194,127,.26);
+  --conn-stale-ink:var(--amber);
+
+  --tool-ink:#a9a8c0;
+  --tool-bg:rgba(255,255,255,.05);
+  --tool-border:rgba(142,137,176,.22);
+  --tool-hover-bg:rgba(255,255,255,.11);
+  --tool-hover-border:rgba(185,164,255,.45);
+
+  --select-bg:rgba(255,255,255,.06);
+  --select-hover-bg:rgba(255,255,255,.10);
+  --select-border:rgba(142,137,176,.28);
+  --select-hover-border:rgba(185,164,255,.5);
+  --select-ink:#e6e5f5;
+  --option-bg:#22233a;
+  --option-ink:#e6e5f5;
+  --divider-ink:#73728d;
+
+  --track-bg:rgba(91,88,116,.24);
+  --track-shadow:inset 0 1px 2px rgba(0,0,0,.35);
+  --ring-track-empty:rgba(91,88,116,.26);
+  --ring-glow:0 0 18px rgba(143,118,240,.22);
+  --ring-inner:radial-gradient(circle at 50% 35%,#2c2c47,#191a2b);
+  --ring-rim:inset 0 1px rgba(255,255,255,.08);
+  --ring-num:#efeaff;
+  --ring-pct:#a59dc4;
+
+  --pill-bg:linear-gradient(155deg,rgba(44,44,72,.96) 0%,rgba(27,29,47,.96) 100%);
+  --pill-border:rgba(157,149,192,.32);
+  --pill-ink:#e3e0f3;
+  --pill-shadow:0 4px 12px rgba(0,0,0,.28),inset 0 1px rgba(255,255,255,.08);
+  --hint-bg:rgba(22,24,42,.94);
+  --hint-border:rgba(138,132,173,.24);
+  --hint-ink:#bdb7da;
+
+  --accent-ink-mix:0%;
+  --accent-pill-bg-alpha:86%;
+  --accent-pill-border-alpha:64%;
+  --state-key-mix:0%;
+  --state-text-mix:#ffffff;
+  --state-text-pct:18%;
+  --state-pill-bg-alpha:86%;
+
+  --ticket-bg:linear-gradient(145deg,rgba(255,255,255,.06),rgba(255,255,255,.028));
+  --ticket-border:rgba(150,145,190,.17);
+  --ticket-hover-bg:linear-gradient(145deg,rgba(255,255,255,.095),rgba(255,255,255,.05));
+  --ticket-top-ink:#9a9bb5;
+  --ticket-extra-ink:#c0bcd6;
+  --ticket-extra-rule:rgba(140,135,175,.28);
+  --ticket-planned-bg:rgba(255,255,255,.025);
+  --ticket-planned-border:rgba(150,145,190,.24);
+  --empty-border:rgba(143,137,176,.22);
+  --scroll-thumb:rgba(130,126,166,.48);
+  --orbit-line:rgba(165,150,232,.66);
+  --orbit-dot:#b9a4ff;
+  --orbit-glow:rgba(185,164,255,.85);
+}
+
+html[data-theme="white"] {
+  color-scheme:light;
+  color:#162032;
+  --ink:#162032;
+  --ink-dim:#465773;
+  --ink-mute:#6b7b94;
+  --theme-accent:#4c6ef0;
+  --focus-ring:#4c6ef0;
+  --surface-glow-a:radial-gradient(118% 76% at 6% 0%,rgba(76,110,240,.10) 0%,rgba(76,110,240,.03) 46%,transparent 74%);
+  --surface-glow-b:radial-gradient(95% 65% at 96% 100%,rgba(126,162,245,.10) 0%,transparent 72%);
+  --surface-base:linear-gradient(152deg,rgba(255,255,255,.97) 0%,rgba(247,250,255,.97) 50%,rgba(235,241,252,.97) 100%);
+  --surface-border:rgba(176,192,222,.72);
+  --surface-rim:rgba(255,255,255,.92);
+  --surface-shadow:0 14px 34px rgba(24,40,72,.14),0 2px 8px rgba(24,40,72,.08);
+  --surface-topline:linear-gradient(90deg,transparent,rgba(76,110,240,.46) 50%,transparent);
+
+  --brand-ink:#243558;
+  --brand-badge-bg:linear-gradient(135deg,#5a7bf5,#3c5be0);
+  --brand-badge-ink:#ffffff;
+  --brand-badge-shadow:0 3px 10px rgba(76,110,240,.28);
+
+  --conn-bg:rgba(47,158,121,.10);
+  --conn-border:rgba(47,158,121,.28);
+  --conn-ink:#1c6f53;
+  --conn-stale-bg:rgba(184,116,24,.10);
+  --conn-stale-border:rgba(184,116,24,.30);
+  --conn-stale-ink:#8d560f;
+
+  --tool-ink:#4c5e7c;
+  --tool-bg:rgba(28,45,74,.05);
+  --tool-border:rgba(148,168,202,.46);
+  --tool-hover-bg:rgba(76,110,240,.10);
+  --tool-hover-border:rgba(76,110,240,.48);
+
+  --select-bg:rgba(255,255,255,.86);
+  --select-hover-bg:#ffffff;
+  --select-border:rgba(176,192,220,.78);
+  --select-hover-border:rgba(76,110,240,.6);
+  --select-ink:#1b2840;
+  --option-bg:#ffffff;
+  --option-ink:#1b2840;
+  --divider-ink:#8a9ab5;
+
+  --track-bg:rgba(28,45,74,.10);
+  --track-shadow:inset 0 1px 2px rgba(28,45,74,.10);
+  --ring-track-empty:rgba(28,45,74,.11);
+  --ring-glow:0 0 16px rgba(143,118,240,.18);
+  --ring-inner:radial-gradient(circle at 50% 35%,#ffffff,#ebf1fc);
+  --ring-rim:inset 0 1px rgba(255,255,255,.95),0 1px 3px rgba(28,45,74,.08);
+  --ring-num:#19253a;
+  --ring-pct:#5c6f8d;
+
+  --pill-bg:linear-gradient(155deg,rgba(255,255,255,.96) 0%,rgba(239,244,253,.96) 100%);
+  --pill-border:rgba(174,191,222,.78);
+  --pill-ink:#1b2840;
+  --pill-shadow:0 6px 16px rgba(24,40,72,.14),inset 0 1px #ffffff;
+  --hint-bg:rgba(255,255,255,.94);
+  --hint-border:rgba(174,191,222,.72);
+  --hint-ink:#4c5e7c;
+
+  --accent-ink-mix:48%;
+  --accent-pill-bg-alpha:76%;
+  --accent-pill-border-alpha:42%;
+  --state-key-mix:44%;
+  --state-text-mix:#141e32;
+  --state-text-pct:56%;
+  --state-pill-bg-alpha:74%;
+
+  --ticket-bg:linear-gradient(145deg,rgba(255,255,255,.94) 0%,rgba(242,247,255,.90) 100%);
+  --ticket-border:rgba(190,204,230,.75);
+  --ticket-hover-bg:linear-gradient(145deg,#ffffff 0%,rgba(237,243,254,.98) 100%);
+  --ticket-top-ink:#5b6d8a;
+  --ticket-extra-ink:#3a4b66;
+  --ticket-extra-rule:rgba(176,192,222,.56);
+  --ticket-planned-bg:rgba(240,245,252,.78);
+  --ticket-planned-border:rgba(176,192,222,.66);
+  --empty-border:rgba(176,192,222,.68);
+  --scroll-thumb:rgba(128,148,180,.46);
+  --orbit-line:rgba(76,110,240,.52);
+  --orbit-dot:#4c6ef0;
+  --orbit-glow:rgba(76,110,240,.55);
+}
+
+html[data-theme="lavender"] {
+  color-scheme:light;
+  color:#2b2140;
+  --ink:#2b2140;
+  --ink-dim:#5c5076;
+  --ink-mute:#7c6f97;
+  --theme-accent:#8f6fd0;
+  --focus-ring:#8f6fd0;
+  --surface-glow-a:radial-gradient(120% 75% at 8% 0%,rgba(154,120,224,.15) 0%,rgba(154,120,224,.04) 48%,transparent 74%);
+  --surface-glow-b:radial-gradient(95% 65% at 96% 100%,rgba(218,142,208,.12) 0%,transparent 72%);
+  --surface-base:linear-gradient(152deg,rgba(253,250,255,.97) 0%,rgba(246,239,255,.97) 50%,rgba(235,224,250,.97) 100%);
+  --surface-border:rgba(198,178,230,.74);
+  --surface-rim:rgba(255,255,255,.92);
+  --surface-shadow:0 14px 36px rgba(72,46,112,.15),0 2px 8px rgba(72,46,112,.08);
+  --surface-topline:linear-gradient(90deg,transparent,rgba(143,111,208,.56) 50%,transparent);
+
+  --brand-ink:#3f2e64;
+  --brand-badge-bg:linear-gradient(135deg,#a385e2,#7e5cc4);
+  --brand-badge-ink:#ffffff;
+  --brand-badge-shadow:0 3px 10px rgba(143,111,208,.30);
+
+  --conn-bg:rgba(47,158,121,.10);
+  --conn-border:rgba(47,158,121,.28);
+  --conn-ink:#1f7156;
+  --conn-stale-bg:rgba(184,116,24,.10);
+  --conn-stale-border:rgba(184,116,24,.30);
+  --conn-stale-ink:#8d560f;
+
+  --tool-ink:#61537d;
+  --tool-bg:rgba(116,86,174,.06);
+  --tool-border:rgba(186,166,222,.50);
+  --tool-hover-bg:rgba(143,111,208,.12);
+  --tool-hover-border:rgba(143,111,208,.52);
+
+  --select-bg:rgba(255,255,255,.84);
+  --select-hover-bg:#ffffff;
+  --select-border:rgba(198,178,230,.78);
+  --select-hover-border:rgba(143,111,208,.62);
+  --select-ink:#2f2445;
+  --option-bg:#fbf8ff;
+  --option-ink:#2f2445;
+  --divider-ink:#9a8cb5;
+
+  --track-bg:rgba(82,56,126,.11);
+  --track-shadow:inset 0 1px 2px rgba(82,56,126,.10);
+  --ring-track-empty:rgba(82,56,126,.12);
+  --ring-glow:0 0 16px rgba(143,118,240,.20);
+  --ring-inner:radial-gradient(circle at 50% 35%,#ffffff,#f0e8fb);
+  --ring-rim:inset 0 1px rgba(255,255,255,.95),0 1px 3px rgba(72,46,112,.08);
+  --ring-num:#2b2140;
+  --ring-pct:#6d5f89;
+
+  --pill-bg:linear-gradient(155deg,rgba(255,255,255,.96) 0%,rgba(241,233,253,.96) 100%);
+  --pill-border:rgba(196,174,230,.78);
+  --pill-ink:#2f2445;
+  --pill-shadow:0 6px 16px rgba(72,46,112,.15),inset 0 1px #ffffff;
+  --hint-bg:rgba(252,249,255,.95);
+  --hint-border:rgba(196,174,230,.72);
+  --hint-ink:#5f527a;
+
+  --accent-ink-mix:46%;
+  --accent-pill-bg-alpha:76%;
+  --accent-pill-border-alpha:42%;
+  --state-key-mix:42%;
+  --state-text-mix:#241938;
+  --state-text-pct:56%;
+  --state-pill-bg-alpha:74%;
+
+  --ticket-bg:linear-gradient(145deg,rgba(255,255,255,.92) 0%,rgba(247,240,255,.90) 100%);
+  --ticket-border:rgba(206,188,236,.72);
+  --ticket-hover-bg:linear-gradient(145deg,#ffffff 0%,rgba(241,232,254,.98) 100%);
+  --ticket-top-ink:#6b5d86;
+  --ticket-extra-ink:#4a3d66;
+  --ticket-extra-rule:rgba(196,174,230,.56);
+  --ticket-planned-bg:rgba(245,238,254,.78);
+  --ticket-planned-border:rgba(196,174,230,.66);
+  --empty-border:rgba(196,174,230,.68);
+  --scroll-thumb:rgba(150,130,192,.46);
+  --orbit-line:rgba(143,111,208,.56);
+  --orbit-dot:#8f6fd0;
+  --orbit-glow:rgba(143,111,208,.55);
+}
+
+html[data-theme="sky"] {
+  color-scheme:light;
+  color:#162b40;
+  --ink:#162b40;
+  --ink-dim:#46627e;
+  --ink-mute:#6b859e;
+  --theme-accent:#3f8fd4;
+  --focus-ring:#3f8fd4;
+  --surface-glow-a:radial-gradient(120% 75% at 8% 0%,rgba(63,143,212,.15) 0%,rgba(63,143,212,.04) 46%,transparent 74%);
+  --surface-glow-b:radial-gradient(95% 65% at 96% 100%,rgba(66,186,182,.11) 0%,transparent 72%);
+  --surface-base:linear-gradient(152deg,rgba(251,254,255,.97) 0%,rgba(240,248,255,.97) 52%,rgba(224,239,253,.97) 100%);
+  --surface-border:rgba(176,206,234,.76);
+  --surface-rim:rgba(255,255,255,.92);
+  --surface-shadow:0 14px 34px rgba(24,64,98,.14),0 2px 8px rgba(24,64,98,.08);
+  --surface-topline:linear-gradient(90deg,transparent,rgba(63,143,212,.54) 50%,transparent);
+
+  --brand-ink:#1c476e;
+  --brand-badge-bg:linear-gradient(135deg,#4da0e6,#2f7cc0);
+  --brand-badge-ink:#ffffff;
+  --brand-badge-shadow:0 3px 10px rgba(63,143,212,.30);
+
+  --conn-bg:rgba(47,158,121,.10);
+  --conn-border:rgba(47,158,121,.28);
+  --conn-ink:#1b7157;
+  --conn-stale-bg:rgba(184,116,24,.10);
+  --conn-stale-border:rgba(184,116,24,.30);
+  --conn-stale-ink:#8d560f;
+
+  --tool-ink:#486682;
+  --tool-bg:rgba(47,124,192,.06);
+  --tool-border:rgba(164,196,226,.54);
+  --tool-hover-bg:rgba(63,143,212,.12);
+  --tool-hover-border:rgba(63,143,212,.52);
+
+  --select-bg:rgba(255,255,255,.86);
+  --select-hover-bg:#ffffff;
+  --select-border:rgba(176,206,234,.80);
+  --select-hover-border:rgba(63,143,212,.62);
+  --select-ink:#1a3147;
+  --option-bg:#fbfdff;
+  --option-ink:#1a3147;
+  --divider-ink:#82a0bc;
+
+  --track-bg:rgba(24,64,98,.10);
+  --track-shadow:inset 0 1px 2px rgba(24,64,98,.10);
+  --ring-track-empty:rgba(24,64,98,.11);
+  --ring-glow:0 0 16px rgba(143,118,240,.18);
+  --ring-inner:radial-gradient(circle at 50% 35%,#ffffff,#e8f3fd);
+  --ring-rim:inset 0 1px rgba(255,255,255,.95),0 1px 3px rgba(24,64,98,.08);
+  --ring-num:#162b40;
+  --ring-pct:#52718f;
+
+  --pill-bg:linear-gradient(155deg,rgba(255,255,255,.96) 0%,rgba(233,244,254,.96) 100%);
+  --pill-border:rgba(172,204,234,.80);
+  --pill-ink:#1a3147;
+  --pill-shadow:0 6px 16px rgba(24,64,98,.14),inset 0 1px #ffffff;
+  --hint-bg:rgba(250,253,255,.95);
+  --hint-border:rgba(172,204,234,.74);
+  --hint-ink:#486682;
+
+  --accent-ink-mix:46%;
+  --accent-pill-bg-alpha:76%;
+  --accent-pill-border-alpha:42%;
+  --state-key-mix:44%;
+  --state-text-mix:#122538;
+  --state-text-pct:56%;
+  --state-pill-bg-alpha:74%;
+
+  --ticket-bg:linear-gradient(145deg,rgba(255,255,255,.93) 0%,rgba(239,248,255,.90) 100%);
+  --ticket-border:rgba(184,212,238,.74);
+  --ticket-hover-bg:linear-gradient(145deg,#ffffff 0%,rgba(232,244,255,.98) 100%);
+  --ticket-top-ink:#54708c;
+  --ticket-extra-ink:#324d66;
+  --ticket-extra-rule:rgba(172,204,234,.56);
+  --ticket-planned-bg:rgba(238,247,254,.80);
+  --ticket-planned-border:rgba(172,204,234,.68);
+  --empty-border:rgba(172,204,234,.70);
+  --scroll-thumb:rgba(116,154,190,.46);
+  --orbit-line:rgba(63,143,212,.56);
+  --orbit-dot:#3f8fd4;
+  --orbit-glow:rgba(63,143,212,.55);
+}
+
+html[data-theme="mint"] {
+  color-scheme:light;
+  color:#103639;
+  --ink:#103639;
+  --ink-dim:#2e6567;
+  --ink-mute:#588c8d;
+  --theme-accent:#18b98f;
+  --focus-ring:#18b98f;
+  --surface-glow-a:radial-gradient(114% 74% at 6% 0%,rgba(46,226,180,.24) 0%,rgba(46,226,180,.07) 45%,transparent 74%);
+  --surface-glow-b:radial-gradient(100% 68% at 96% 100%,rgba(56,188,248,.22) 0%,rgba(56,188,248,.06) 46%,transparent 74%);
+  --surface-base:linear-gradient(148deg,rgba(247,255,253,.97) 0%,rgba(238,252,248,.97) 52%,rgba(232,248,254,.97) 100%);
+  --surface-border:rgba(146,218,204,.78);
+  --surface-rim:rgba(255,255,255,.95);
+  --surface-shadow:0 14px 34px rgba(18,92,92,.14),0 2px 8px rgba(18,92,92,.08);
+  --surface-topline:linear-gradient(90deg,transparent,rgba(24,185,143,.78) 26%,rgba(35,168,235,.78) 74%,transparent);
+
+  --brand-ink:#115450;
+  --brand-badge-bg:linear-gradient(135deg,#18b98f 0%,#20b8c8 52%,#28a6eb 100%);
+  --brand-badge-ink:#ffffff;
+  --brand-badge-shadow:0 3px 12px rgba(24,185,143,.30);
+
+  --conn-bg:rgba(24,185,143,.11);
+  --conn-border:rgba(24,185,143,.30);
+  --conn-ink:#0f6f58;
+  --conn-stale-bg:rgba(184,116,24,.10);
+  --conn-stale-border:rgba(184,116,24,.30);
+  --conn-stale-ink:#8d560f;
+
+  --tool-ink:#246060;
+  --tool-bg:rgba(24,185,143,.08);
+  --tool-border:rgba(138,214,198,.64);
+  --tool-hover-bg:linear-gradient(135deg,rgba(24,185,143,.16),rgba(35,168,235,.16));
+  --tool-hover-border:rgba(24,185,143,.58);
+
+  --select-bg:rgba(255,255,255,.88);
+  --select-hover-bg:#ffffff;
+  --select-border:rgba(154,220,206,.82);
+  --select-hover-border:rgba(24,185,143,.64);
+  --select-ink:#103639;
+  --option-bg:#f7fffd;
+  --option-ink:#103639;
+  --divider-ink:#6ea2a2;
+
+  --track-bg:rgba(16,84,84,.10);
+  --track-shadow:inset 0 1px 2px rgba(16,84,84,.10);
+  --ring-track-empty:rgba(16,84,84,.12);
+  --ring-glow:0 0 16px rgba(24,185,143,.22);
+  --ring-inner:radial-gradient(circle at 50% 35%,#ffffff 0%,#edfcf7 56%,#e4f6fe 100%);
+  --ring-rim:inset 0 1px rgba(255,255,255,.95),0 1px 3px rgba(18,92,92,.08);
+  --ring-num:#103639;
+  --ring-pct:#326a6b;
+
+  --pill-bg:linear-gradient(148deg,rgba(247,255,253,.96) 0%,rgba(236,251,247,.96) 52%,rgba(232,248,255,.96) 100%);
+  --pill-border:rgba(146,218,204,.82);
+  --pill-ink:#103639;
+  --pill-shadow:0 6px 16px rgba(18,92,92,.14),inset 0 1px #ffffff;
+  --hint-bg:rgba(246,255,252,.95);
+  --hint-border:rgba(146,218,204,.76);
+  --hint-ink:#2e6567;
+
+  --accent-ink-mix:48%;
+  --accent-pill-bg-alpha:76%;
+  --accent-pill-border-alpha:44%;
+  --state-key-mix:46%;
+  --state-text-mix:#0c2e31;
+  --state-text-pct:58%;
+  --state-pill-bg-alpha:74%;
+
+  --ticket-bg:linear-gradient(142deg,rgba(255,255,255,.94) 0%,rgba(241,253,249,.92) 52%,rgba(235,248,255,.92) 100%);
+  --ticket-border:rgba(158,222,208,.76);
+  --ticket-hover-bg:linear-gradient(142deg,#ffffff 0%,rgba(232,251,245,.98) 52%,rgba(230,245,255,.98) 100%);
+  --ticket-top-ink:#326869;
+  --ticket-extra-ink:#1b484a;
+  --ticket-extra-rule:rgba(146,218,204,.60);
+  --ticket-planned-bg:rgba(236,251,246,.82);
+  --ticket-planned-border:rgba(146,218,204,.72);
+  --empty-border:rgba(146,218,204,.72);
+  --scroll-thumb:rgba(76,174,162,.46);
+  --orbit-line:rgba(24,185,143,.58);
+  --orbit-dot:#23a8eb;
+  --orbit-glow:rgba(24,185,143,.62);
+}
+
+html[data-theme="sugar"] {
+  color-scheme:light;
+  color:#2c1e3a;
+  --ink:#2c1e3a;
+  --ink-dim:#5e4b73;
+  --ink-mute:#806c96;
+  --theme-accent:#eb78ab;
+  --focus-ring:#eb78ab;
+  --surface-glow-a:radial-gradient(112% 74% at 6% 0%,rgba(240,126,177,.22) 0%,rgba(240,126,177,.06) 45%,transparent 74%);
+  --surface-glow-b:radial-gradient(100% 68% at 96% 100%,rgba(104,183,255,.22) 0%,rgba(104,183,255,.06) 46%,transparent 74%);
+  --surface-base:linear-gradient(146deg,rgba(255,245,251,.97) 0%,rgba(250,244,254,.97) 50%,rgba(237,246,255,.97) 100%);
+  --surface-border:rgba(218,186,226,.76);
+  --surface-rim:rgba(255,255,255,.94);
+  --surface-shadow:0 14px 34px rgba(114,68,134,.14),0 2px 8px rgba(114,68,134,.08);
+  --surface-topline:linear-gradient(90deg,transparent,rgba(235,120,171,.78) 28%,rgba(182,158,248,.68) 50%,rgba(98,178,252,.78) 72%,transparent);
+
+  --brand-ink:#4c2b61;
+  --brand-badge-bg:linear-gradient(135deg,#eb78ab 0%,#ba8df4 52%,#62b2fc 100%);
+  --brand-badge-ink:#ffffff;
+  --brand-badge-shadow:0 3px 12px rgba(235,120,171,.30);
+
+  --conn-bg:rgba(47,158,121,.10);
+  --conn-border:rgba(47,158,121,.28);
+  --conn-ink:#1c7156;
+  --conn-stale-bg:rgba(184,116,24,.10);
+  --conn-stale-border:rgba(184,116,24,.30);
+  --conn-stale-ink:#8d560f;
+
+  --tool-ink:#634e78;
+  --tool-bg:rgba(235,120,171,.07);
+  --tool-border:rgba(212,178,224,.58);
+  --tool-hover-bg:linear-gradient(135deg,rgba(235,120,171,.14),rgba(98,178,252,.14));
+  --tool-hover-border:rgba(235,120,171,.54);
+
+  --select-bg:rgba(255,255,255,.86);
+  --select-hover-bg:#ffffff;
+  --select-border:rgba(214,182,226,.80);
+  --select-hover-border:rgba(235,120,171,.62);
+  --select-ink:#2e203d;
+  --option-bg:#fdf8fc;
+  --option-ink:#2e203d;
+  --divider-ink:#a38eb8;
+
+  --track-bg:rgba(92,58,118,.10);
+  --track-shadow:inset 0 1px 2px rgba(92,58,118,.10);
+  --ring-track-empty:rgba(92,58,118,.11);
+  --ring-glow:0 0 16px rgba(235,120,171,.20);
+  --ring-inner:radial-gradient(circle at 50% 35%,#ffffff 0%,#faf0f8 54%,#edf6ff 100%);
+  --ring-rim:inset 0 1px rgba(255,255,255,.95),0 1px 3px rgba(114,68,134,.08);
+  --ring-num:#2c1e3a;
+  --ring-pct:#75608c;
+
+  --pill-bg:linear-gradient(146deg,rgba(255,246,252,.96) 0%,rgba(250,245,254,.96) 50%,rgba(237,246,255,.96) 100%);
+  --pill-border:rgba(214,180,224,.80);
+  --pill-ink:#2e203d;
+  --pill-shadow:0 6px 16px rgba(114,68,134,.15),inset 0 1px #ffffff;
+  --hint-bg:rgba(253,248,253,.95);
+  --hint-border:rgba(214,180,224,.74);
+  --hint-ink:#5e4b73;
+
+  --accent-ink-mix:48%;
+  --accent-pill-bg-alpha:76%;
+  --accent-pill-border-alpha:42%;
+  --state-key-mix:44%;
+  --state-text-mix:#251833;
+  --state-text-pct:56%;
+  --state-pill-bg-alpha:74%;
+
+  --ticket-bg:linear-gradient(142deg,rgba(255,255,255,.93) 0%,rgba(253,245,251,.90) 50%,rgba(241,248,255,.91) 100%);
+  --ticket-border:rgba(218,184,224,.72);
+  --ticket-hover-bg:linear-gradient(142deg,#ffffff 0%,rgba(255,240,249,.98) 50%,rgba(236,246,255,.98) 100%);
+  --ticket-top-ink:#6d5882;
+  --ticket-extra-ink:#48365b;
+  --ticket-extra-rule:rgba(214,180,224,.58);
+  --ticket-planned-bg:rgba(250,242,251,.80);
+  --ticket-planned-border:rgba(214,180,224,.68);
+  --empty-border:rgba(214,180,224,.70);
+  --scroll-thumb:rgba(182,140,196,.48);
+  --orbit-line:rgba(235,120,171,.58);
+  --orbit-dot:#62b2fc;
+  --orbit-glow:rgba(235,120,171,.62);
+}
+
+html[data-theme="crimson"] {
+  color-scheme:dark;
+  color:#fbf1ec;
+  --ink:#fbf1ec;
+  --ink-dim:#e2c2ba;
+  --ink-mute:#b88f8b;
+  --theme-accent:#f0c25e;
+  --focus-ring:#f0c25e;
+  --surface-glow-a:radial-gradient(120% 80% at 4% 0%,rgba(224,40,67,.38) 0%,rgba(192,28,54,.14) 46%,transparent 74%);
+  --surface-glow-b:radial-gradient(106% 74% at 96% 100%,rgba(240,194,94,.28) 0%,rgba(220,156,56,.10) 46%,transparent 74%);
+  --surface-base:linear-gradient(148deg,rgba(56,16,28,.97) 0%,rgba(32,11,18,.97) 52%,rgba(16,7,10,.98) 100%);
+  --surface-border:rgba(240,194,94,.48);
+  --surface-rim:rgba(245,206,120,.26);
+  --surface-shadow:0 14px 36px rgba(6,1,3,.62),0 2px 8px rgba(6,1,3,.40);
+  --surface-topline:linear-gradient(90deg,transparent,rgba(235,48,76,.92) 20%,rgba(245,202,102,.96) 50%,rgba(235,48,76,.92) 80%,transparent);
+
+  --brand-ink:#fbe09c;
+  --brand-badge-bg:linear-gradient(135deg,#e02843 0%,#b41b34 48%,#f0c25e 100%);
+  --brand-badge-ink:#fff9ef;
+  --brand-badge-shadow:0 3px 12px rgba(224,40,67,.44);
+
+  --conn-bg:rgba(143,220,192,.11);
+  --conn-border:rgba(143,220,192,.28);
+  --conn-ink:#9fd7c4;
+  --conn-stale-bg:rgba(240,194,127,.12);
+  --conn-stale-border:rgba(240,194,127,.32);
+  --conn-stale-ink:var(--amber);
+
+  --tool-ink:#f6d48a;
+  --tool-bg:rgba(224,40,67,.16);
+  --tool-border:rgba(240,194,94,.42);
+  --tool-hover-bg:rgba(240,194,94,.22);
+  --tool-hover-border:rgba(240,194,94,.70);
+
+  --select-bg:rgba(52,16,27,.84);
+  --select-hover-bg:rgba(68,21,35,.94);
+  --select-border:rgba(240,194,94,.46);
+  --select-hover-border:rgba(240,194,94,.74);
+  --select-ink:#fbf1ec;
+  --option-bg:#240c14;
+  --option-ink:#fbf1ec;
+  --divider-ink:#c49788;
+
+  --track-bg:rgba(96,32,48,.56);
+  --track-shadow:inset 0 1px 2px rgba(0,0,0,.46);
+  --ring-track-empty:rgba(128,42,60,.44);
+  --ring-glow:0 0 20px rgba(224,40,67,.34);
+  --ring-inner:radial-gradient(circle at 50% 35%,#4d1726,#1c080e);
+  --ring-rim:inset 0 1px rgba(240,194,94,.24);
+  --ring-num:#fff1ca;
+  --ring-pct:#f0c25e;
+
+  --pill-bg:linear-gradient(148deg,rgba(66,20,33,.96) 0%,rgba(36,12,20,.96) 54%,rgba(19,7,11,.97) 100%);
+  --pill-border:rgba(240,194,94,.54);
+  --pill-ink:#fbf1ec;
+  --pill-shadow:0 6px 16px rgba(6,1,3,.50),inset 0 1px rgba(240,194,94,.24);
+  --hint-bg:rgba(32,11,18,.95);
+  --hint-border:rgba(240,194,94,.40);
+  --hint-ink:#ecd1bb;
+
+  --accent-ink-mix:0%;
+  --accent-pill-bg-alpha:86%;
+  --accent-pill-border-alpha:64%;
+  --state-key-mix:0%;
+  --state-text-mix:#ffffff;
+  --state-text-pct:20%;
+  --state-pill-bg-alpha:86%;
+
+  --ticket-bg:linear-gradient(145deg,rgba(76,22,37,.86) 0%,rgba(44,13,22,.88) 54%,rgba(26,9,15,.92) 100%);
+  --ticket-border:rgba(224,58,82,.44);
+  --ticket-hover-bg:linear-gradient(145deg,rgba(96,26,45,.92) 0%,rgba(54,16,27,.92) 100%);
+  --ticket-top-ink:#e2c2ba;
+  --ticket-extra-ink:#f6dfd9;
+  --ticket-extra-rule:rgba(240,194,94,.38);
+  --ticket-planned-bg:rgba(38,13,21,.72);
+  --ticket-planned-border:rgba(240,194,94,.36);
+  --empty-border:rgba(224,58,82,.38);
+  --scroll-thumb:rgba(224,84,104,.52);
+  --orbit-line:rgba(240,194,94,.72);
+  --orbit-dot:#eb334d;
+  --orbit-glow:rgba(240,194,94,.90);
+}
+
+html[data-theme="citrus"] {
+  color-scheme:light;
+  color:#452611;
+  --ink:#452611;
+  --ink-dim:#7b4c2a;
+  --ink-mute:#a67652;
+  --theme-accent:#f47c20;
+  --focus-ring:#f47c20;
+  --surface-glow-a:radial-gradient(114% 74% at 6% 0%,rgba(255,152,62,.24) 0%,rgba(255,152,62,.07) 45%,transparent 74%);
+  --surface-glow-b:radial-gradient(100% 68% at 96% 100%,rgba(255,198,112,.22) 0%,rgba(255,198,112,.06) 46%,transparent 74%);
+  --surface-base:linear-gradient(148deg,rgba(255,253,249,.97) 0%,rgba(255,246,234,.97) 52%,rgba(255,239,218,.97) 100%);
+  --surface-border:rgba(238,184,126,.78);
+  --surface-rim:rgba(255,255,255,.95);
+  --surface-shadow:0 14px 34px rgba(154,82,24,.14),0 2px 8px rgba(154,82,24,.08);
+  --surface-topline:linear-gradient(90deg,transparent,rgba(244,124,32,.80) 26%,rgba(255,172,72,.82) 74%,transparent);
+
+  --brand-ink:#7a3e14;
+  --brand-badge-bg:linear-gradient(135deg,#f2741b 0%,#f7932c 54%,#9e5624 100%);
+  --brand-badge-ink:#ffffff;
+  --brand-badge-shadow:0 3px 12px rgba(244,124,32,.30);
+
+  --conn-bg:rgba(38,150,104,.10);
+  --conn-border:rgba(38,150,104,.28);
+  --conn-ink:#1a724d;
+  --conn-stale-bg:rgba(184,106,18,.10);
+  --conn-stale-border:rgba(184,106,18,.30);
+  --conn-stale-ink:#8d510d;
+
+  --tool-ink:#7b4c2a;
+  --tool-bg:rgba(244,124,32,.08);
+  --tool-border:rgba(235,178,120,.64);
+  --tool-hover-bg:linear-gradient(135deg,rgba(244,124,32,.16),rgba(255,176,84,.18));
+  --tool-hover-border:rgba(244,124,32,.58);
+
+  --select-bg:rgba(255,255,255,.88);
+  --select-hover-bg:#ffffff;
+  --select-border:rgba(236,184,128,.82);
+  --select-hover-border:rgba(244,124,32,.64);
+  --select-ink:#452611;
+  --option-bg:#fffcf7;
+  --option-ink:#452611;
+  --divider-ink:#b4835e;
+
+  --track-bg:rgba(138,76,28,.11);
+  --track-shadow:inset 0 1px 2px rgba(138,76,28,.10);
+  --ring-track-empty:rgba(138,76,28,.12);
+  --ring-glow:0 0 16px rgba(244,124,32,.22);
+  --ring-inner:radial-gradient(circle at 50% 35%,#ffffff 0%,#fff5e6 56%,#ffe9cc 100%);
+  --ring-rim:inset 0 1px rgba(255,255,255,.95),0 1px 3px rgba(154,82,24,.08);
+  --ring-num:#452611;
+  --ring-pct:#8c542b;
+
+  --pill-bg:linear-gradient(148deg,rgba(255,253,249,.96) 0%,rgba(255,245,232,.96) 52%,rgba(255,238,216,.96) 100%);
+  --pill-border:rgba(238,184,126,.82);
+  --pill-ink:#452611;
+  --pill-shadow:0 6px 16px rgba(154,82,24,.14),inset 0 1px #ffffff;
+  --hint-bg:rgba(255,252,247,.95);
+  --hint-border:rgba(238,184,126,.76);
+  --hint-ink:#7b4c2a;
+
+  --accent-ink-mix:48%;
+  --accent-pill-bg-alpha:76%;
+  --accent-pill-border-alpha:44%;
+  --state-key-mix:46%;
+  --state-text-mix:#3b1f0c;
+  --state-text-pct:58%;
+  --state-pill-bg-alpha:74%;
+
+  --ticket-bg:linear-gradient(142deg,rgba(255,255,255,.94) 0%,rgba(255,248,239,.92) 52%,rgba(255,241,222,.92) 100%);
+  --ticket-border:rgba(240,192,140,.76);
+  --ticket-hover-bg:linear-gradient(142deg,#ffffff 0%,rgba(255,242,224,.98) 52%,rgba(255,235,208,.98) 100%);
+  --ticket-top-ink:#7c4f2e;
+  --ticket-extra-ink:#5c3518;
+  --ticket-extra-rule:rgba(238,184,126,.60);
+  --ticket-planned-bg:rgba(255,246,234,.84);
+  --ticket-planned-border:rgba(238,184,126,.72);
+  --empty-border:rgba(238,184,126,.72);
+  --scroll-thumb:rgba(218,144,78,.48);
+  --orbit-line:rgba(244,124,32,.58);
+  --orbit-dot:#a25722;
+  --orbit-glow:rgba(244,124,32,.62);
 }
 * {
   box-sizing:border-box
@@ -33,7 +692,7 @@ button {
   cursor:pointer
 }
 button:focus-visible,select:focus-visible,summary:focus-visible {
-  outline:2px solid #b7a8ff;
+  outline:2px solid var(--focus-ring);
   outline-offset:3px
 }
 [hidden] {
@@ -57,11 +716,13 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
   position:absolute;
   overflow:hidden;
   background:
-    radial-gradient(120% 70% at 0% 0%,color-mix(in srgb,var(--accent),transparent 86%),transparent 60%),
-    linear-gradient(160deg,rgba(36,36,58,.97),rgba(18,20,33,.97));
-  border:1px solid #8a84ad40;
+    var(--surface-glow-a),
+    var(--surface-glow-b),
+    var(--surface-base);
+  border:1px solid var(--surface-border);
   border-radius:18px;
-  box-shadow:0 14px 36px #05081266,0 2px 6px #0508123d,inset 0 1px #ffffff12
+  box-shadow:var(--surface-shadow),inset 0 1px var(--surface-rim);
+  transition:border-color .18s ease,box-shadow .18s ease
 }
 .surface::before {
   content:"";
@@ -70,7 +731,7 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
   right:18px;
   top:0;
   height:1px;
-  background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--accent),transparent 25%),transparent);
+  background:var(--surface-topline);
   pointer-events:none
 }
 
@@ -94,7 +755,7 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
   font-size:10px;
   font-weight:750;
   letter-spacing:2.2px;
-  color:#c9bff2
+  color:var(--brand-ink)
 }
 .brand-mark {
   display:grid;
@@ -102,12 +763,12 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
   width:18px;
   height:18px;
   border-radius:6px;
-  background:linear-gradient(135deg,var(--violet),var(--violet-strong));
-  color:#17132b;
+  background:var(--brand-badge-bg);
+  color:var(--brand-badge-ink);
   font-style:normal;
   font-size:11px;
   letter-spacing:0;
-  box-shadow:0 3px 10px #8f76f055
+  box-shadow:var(--brand-badge-shadow)
 }
 .connection {
   margin-left:auto;
@@ -116,9 +777,9 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
   gap:6px;
   padding:2px 9px;
   border-radius:20px;
-  background:#8fdcc014;
-  border:1px solid #8fdcc030;
-  color:#9fd7c4;
+  background:var(--conn-bg);
+  border:1px solid var(--conn-border);
+  color:var(--conn-ink);
   font-size:10px
 }
 .connection::before {
@@ -126,14 +787,23 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
   width:6px;
   height:6px;
   border-radius:50%;
-  background:currentColor;
-  box-shadow:0 0 0 3px color-mix(in srgb,currentColor,transparent 82%);
+  background:var(--mint);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--mint),transparent 80%);
   animation:pulse 2.4s ease-in-out infinite
 }
 .connection.stale {
-  color:var(--amber);
-  background:#f0c27f14;
-  border-color:#f0c27f33
+  color:var(--conn-stale-ink);
+  background:var(--conn-stale-bg);
+  border-color:var(--conn-stale-border)
+}
+.connection.stale::before {
+  background:var(--amber);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--amber),transparent 80%)
+}
+.heading-tools {
+  display:flex;
+  align-items:center;
+  gap:4px
 }
 .heading button {
   display:grid;
@@ -144,14 +814,27 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
   border-radius:7px;
   background:transparent;
   border:1px solid transparent;
-  color:#a4a3b9;
+  color:var(--tool-ink);
   font-size:18px;
   line-height:1;
   transition:background-color .15s ease,color .15s ease,border-color .15s ease
 }
-.heading button:hover {
-  background:#ffffff10;
-  border-color:#ffffff1a;
+.heading .tool-btn {
+  background:var(--tool-bg);
+  border-color:var(--tool-border)
+}
+.heading .tool-btn svg {
+  width:13px;
+  height:13px;
+  display:block
+}
+.heading .tool-btn:disabled {
+  opacity:.35;
+  cursor:default
+}
+.heading button:hover:not(:disabled) {
+  background:var(--tool-hover-bg);
+  border-color:var(--tool-hover-border);
   color:var(--ink)
 }
 .overview-body {
@@ -170,23 +853,23 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
   min-width:0
 }
 .selectors select {
-  background:#ffffff0b;
-  border:1px solid #8e89b040;
+  background:var(--select-bg);
+  border:1px solid var(--select-border);
   border-radius:8px;
-  color:#e4e2f2;
+  color:var(--select-ink);
   max-width:200px;
   min-width:0;
   padding:4px 6px;
   outline-offset:1px;
-  transition:border-color .15s ease,background-color .15s ease
+  transition:border-color .15s ease,background-color .15s ease,color .15s ease
 }
 .selectors select:hover {
-  border-color:#b9a4ff70;
-  background:#ffffff12
+  border-color:var(--select-hover-border);
+  background:var(--select-hover-bg)
 }
 .selectors option {
-  background:#22233a;
-  color:#e4e2f2
+  background:var(--option-bg);
+  color:var(--option-ink)
 }
 #project {
   max-width:150px
@@ -196,7 +879,7 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
   max-width:190px
 }
 .divider {
-  color:#6b6982
+  color:var(--divider-ink)
 }
 .progress-line {
   margin-top:10px;
@@ -207,11 +890,11 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
 .progress-track {
   position:relative;
   height:6px;
-  background:#5b587426;
+  background:var(--track-bg);
   border-radius:6px;
   overflow:hidden;
   margin-top:7px;
-  box-shadow:inset 0 1px 2px #0005
+  box-shadow:var(--track-shadow)
 }
 .progress-track div {
   position:absolute;
@@ -270,20 +953,20 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
   width:74px;
   height:74px;
   border-radius:50%;
-  background:conic-gradient(var(--violet) calc(var(--p) * 1%),#5b587430 0);
-  box-shadow:0 0 18px #8f76f033
+  background:conic-gradient(var(--violet) calc(var(--p) * 1%),var(--ring-track-empty) 0);
+  box-shadow:var(--ring-glow)
 }
 .ring::before {
   content:"";
   position:absolute;
   inset:6px;
   border-radius:50%;
-  background:radial-gradient(circle at 50% 35%,#2c2c47,#191a2b);
-  box-shadow:inset 0 1px #ffffff10
+  background:var(--ring-inner);
+  box-shadow:var(--ring-rim)
 }
 .ring strong {
   position:relative;
-  color:#efeaff;
+  color:var(--ring-num);
   font-size:21px;
   font-weight:650;
   letter-spacing:-.5px;
@@ -292,7 +975,7 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
 .ring strong span {
   font-size:10px;
   margin-left:1px;
-  color:#a59dc4;
+  color:var(--ring-pct);
   font-weight:500
 }
 
@@ -347,17 +1030,18 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
   display:flex;
   align-items:center;
   gap:6px;
-  background:linear-gradient(160deg,#2a2a44f2,#1a1c2df2);
-  border:1px solid #9d95c04d;
+  background:var(--pill-bg);
+  border:1px solid var(--pill-border);
   border-radius:20px;
-  color:#dedbef;
+  color:var(--pill-ink);
   padding:4px 11px;
   font-size:10px;
   font-weight:500;
   font-variant-numeric:tabular-nums;
   white-space:nowrap;
   pointer-events:none;
-  box-shadow:0 4px 12px #0004,inset 0 1px #ffffff10
+  box-shadow:var(--pill-shadow);
+  transition:border-color .18s ease,color .18s ease
 }
 .live-dot {
   width:6px;
@@ -375,13 +1059,13 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
   margin:0;
   padding:3px 10px;
   border-radius:20px;
-  background:#16182af0;
-  border:1px solid #8a84ad33;
+  background:var(--hint-bg);
+  border:1px solid var(--hint-border);
   font-size:9px;
   text-align:center;
-  color:#bdb7da;
+  color:var(--hint-ink);
   white-space:nowrap;
-  box-shadow:0 3px 10px #0004
+  box-shadow:0 3px 10px rgba(0,0,0,.18)
 }
 
 /* ---------------------------------------------------------------- 票卡分组 */
@@ -423,11 +1107,11 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
   place-items:center;
   min-width:22px;
   height:18px;
-  color:var(--accent);
+  color:color-mix(in srgb,var(--accent),var(--ink) var(--accent-ink-mix));
   font-size:9px;
   font-weight:650;
-  background:color-mix(in srgb,var(--accent),transparent 86%);
-  border:1px solid color-mix(in srgb,var(--accent),transparent 66%);
+  background:color-mix(in srgb,var(--accent),transparent var(--accent-pill-bg-alpha));
+  border:1px solid color-mix(in srgb,var(--accent),transparent var(--accent-pill-border-alpha));
   border-radius:6px;
   font-variant-numeric:tabular-nums
 }
@@ -435,8 +1119,8 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
   margin-left:auto;
   padding:1px 8px;
   border-radius:20px;
-  background:color-mix(in srgb,var(--accent),transparent 88%);
-  color:var(--accent);
+  background:color-mix(in srgb,var(--accent),transparent var(--accent-pill-bg-alpha));
+  color:color-mix(in srgb,var(--accent),var(--ink) var(--accent-ink-mix));
   font-size:10px;
   font-weight:600;
   font-variant-numeric:tabular-nums
@@ -447,7 +1131,7 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
   gap:6px;
   overflow:auto;
   scrollbar-width:thin;
-  scrollbar-color:#6f6a8a77 transparent;
+  scrollbar-color:var(--scroll-thumb) transparent;
   min-height:30px;
   max-height:188px;
   padding-right:3px
@@ -458,10 +1142,10 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
   flex-shrink:0;
   padding:7px 9px 8px 11px;
   border-radius:10px;
-  background:#ffffff07;
-  border:1px solid #8f89b021;
+  background:var(--ticket-bg);
+  border:1px solid var(--ticket-border);
   user-select:text;
-  transition:background-color .15s ease,border-color .15s ease
+  transition:border-color .18s ease
 }
 .ticket::before {
   content:"";
@@ -474,8 +1158,8 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
   background:var(--state)
 }
 .ticket:hover,.ticket[open] {
-  background:#ffffff0e;
-  border-color:color-mix(in srgb,var(--state),transparent 62%)
+  background:var(--ticket-hover-bg);
+  border-color:color-mix(in srgb,var(--state),transparent 52%)
 }
 .ticket[data-state="accepted"] { --state:var(--mint) }
 .ticket[data-state="ready"],.ticket[data-state="trial"] { --state:#7fd3d6 }
@@ -483,6 +1167,17 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
 .ticket[data-state="rework"],.ticket[data-state="changes_requested"],.ticket[data-state="paused"] { --state:var(--amber) }
 .ticket[data-state="reviewing"],.ticket[data-state="waiting_review"],.ticket[data-state="waiting_verification"],.ticket[data-state="waiting_batch"] { --state:var(--sky) }
 .ticket[data-state="queued"] { --state:var(--slate) }
+.ticket[data-state="planned"] {
+  --state:var(--slate);
+  opacity:.82;
+  border-style:dashed;
+  border-color:var(--ticket-planned-border);
+  background:var(--ticket-planned-bg);
+}
+.ticket[data-state="planned"] summary {
+  cursor:default;
+  pointer-events:none;
+}
 .ticket[data-state="blocked"] { --state:var(--rose) }
 .ticket.retired {
   --state:#6f6e86;
@@ -505,11 +1200,11 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
   align-items:center;
   gap:6px;
   font-size:9px;
-  color:#9192a9;
+  color:var(--ticket-top-ink);
   user-select:none
 }
 .ticket-key {
-  color:var(--state);
+  color:color-mix(in srgb,var(--state),var(--ink) var(--state-key-mix));
   font-weight:600;
   letter-spacing:.3px;
   font-variant-numeric:tabular-nums
@@ -521,8 +1216,8 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
   gap:4px;
   padding:1px 7px;
   border-radius:20px;
-  background:color-mix(in srgb,var(--state),transparent 86%);
-  color:color-mix(in srgb,var(--state),#fff 18%);
+  background:color-mix(in srgb,var(--state),transparent var(--state-pill-bg-alpha));
+  color:color-mix(in srgb,var(--state),var(--state-text-mix) var(--state-text-pct));
   font-size:9px;
   font-weight:500
 }
@@ -560,10 +1255,10 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
 .ticket-extra {
   font-size:10px;
   line-height:1.7;
-  color:#bab6d0;
+  color:var(--ticket-extra-ink);
   margin:6px 0 0;
   padding-top:6px;
-  border-top:1px dashed #77718c40;
+  border-top:1px dashed var(--ticket-extra-rule);
   white-space:pre-wrap
 }
 .empty {
@@ -573,7 +1268,7 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
   margin:2px 0;
   padding:10px;
   text-align:center;
-  border:1px dashed #8f89b030;
+  border:1px dashed var(--empty-border);
   border-radius:10px
 }
 
@@ -587,7 +1282,7 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
   position:absolute;
   width:42px;
   height:1px;
-  background:linear-gradient(90deg,#a596e8aa,transparent);
+  background:linear-gradient(90deg,var(--orbit-line),transparent);
   transform-origin:left
 }
 .orbit i::after {
@@ -598,8 +1293,8 @@ button:focus-visible,select:focus-visible,summary:focus-visible {
   width:5px;
   height:5px;
   border-radius:50%;
-  background:#b9a4ff;
-  box-shadow:0 0 6px #b9a4ff
+  background:var(--orbit-dot);
+  box-shadow:0 0 6px var(--orbit-glow)
 }
 .orbit i:nth-child(1) {
   left:468px;

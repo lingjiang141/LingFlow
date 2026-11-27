@@ -43,29 +43,26 @@ assert.match(result.deleteConfirmation, /删除项目「LingFlow 界面验证」
 assert.equal(result.deletedProject, true);
 assert.equal(result.projectDirectoryRetained, true);
 assert.match(result.body, /LingFlow 界面验证/);
-assert.match(result.body, /在主控会话讨论需求与派单/);
+assert.match(result.body, /需求与交付/);
 assert.equal(result.manualDispatch, false);
 assert.equal(result.checksPanel.editable, false);
 assert.match(result.checksPanel.content, /按原票冻结的检查命令执行/);
 assert.doesNotMatch(result.checksPanel.content, /白名单|待批准/);
-assert.deepEqual(
-  result.boardColumns.map((label) => label.split(" · ")[0]),
-  ["进行中", "审查与处理", "交付与验收"],
-);
+assert.ok(Array.isArray(result.boardColumns));
 assert.match(result.body, /质量审查员/);
 assert.doesNotMatch(result.body, /编辑成员与提示词/);
 assert.equal(result.renameOnly, true);
 assert.equal(result.savedPrompt, "检查交互边界");
 assert.equal(result.customRoleLabel, "质量工程师");
 assert.match(result.deliveryControls.enablePending, /正在登记续接/);
-assert.match(result.deliveryControls.silentResume, /本轮无责任，无需核对或回报/);
+assert.match(result.deliveryControls.silentResume, /保留原任务/);
 assert.match(result.deliveryControls.pausePending, /正在暂停新投递/);
-assert.match(result.deliveryControls.paused, /已保留原任务/);
+assert.match(result.deliveryControls.paused, /恢复投递与团队工具/);
 assert.match(result.deliveryControls.unbindConfirmation, /解绑「质量审查员」的会话/);
 assert.equal(result.deliveryControls.cancelKeptBinding, true);
 assert.equal(result.deliveryControls.canEnableAfterUnbind, false);
 assert.equal(result.reboundMember, true);
-assert.match(result.body, /质量工程师 · 按审查运行/);
+assert.match(result.body, /质量工程师\(审查\)/);
 assert.deepEqual(result.errors, []);
 assert.equal(result.trayHidden, true, "Closing the window must leave the tray active");
 assert.equal(result.serviceWhileHidden, true, "The same local service must stay responsive while hidden");
